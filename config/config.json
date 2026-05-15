@@ -1,0 +1,129 @@
+{
+  "general": {
+    "supported_formats": [
+      ".png",
+      ".jpg",
+      ".jpeg",
+      ".bmp",
+      ".webp"
+    ],
+    "max_undo_depth": 50,
+    "preload_count": 5,
+    "blur_threshold": 100.0,
+    "blur_enabled": false,
+    "auto_next": true,
+    "skip_classified": false
+  },
+  "display": {
+    "zoom_step": 0.15,
+    "max_zoom": 10.0,
+    "min_zoom": 0.05,
+    "crop_overlay_color": "#00FF88",
+    "crop_overlay_width": 2,
+    "info_overlay_opacity": 0.85,
+    "background_color": "#1e1e2e",
+    "thumbnail_size": 120
+  },
+  "crop_sizes": [
+    {
+      "key": "1",
+      "name": "224x224",
+      "width": 224,
+      "height": 224
+    },
+    {
+      "key": "2",
+      "name": "384x384",
+      "width": 384,
+      "height": 384
+    },
+    {
+      "key": "3",
+      "name": "640x640",
+      "width": 640,
+      "height": 640
+    }
+  ],
+  "classifications": [
+    {
+      "key": "Q",
+      "label": "Line_Broken_strands",
+      "folder": "输电线/断股",
+      "color": "#FF6B6B"
+    },
+    {
+      "key": "W",
+      "label": "Line_Damage",
+      "folder": "输电线/损伤",
+      "color": "#FF8C42"
+    },
+    {
+      "key": "E",
+      "label": "Line_Foreign_object",
+      "folder": "输电线/异物",
+      "color": "#FFD93D"
+    },
+    {
+      "key": "R",
+      "label": "Line_Normal",
+      "folder": "输电线/正常",
+      "color": "#6BCB77"
+    },
+    {
+      "key": "A",
+      "label": "Tower_Deformation",
+      "folder": "塔杆/变形",
+      "color": "#C084FC"
+    },
+    {
+      "key": "S",
+      "label": "Tower_Corrosion",
+      "folder": "塔杆/锈蚀",
+      "color": "#F472B6"
+    },
+    {
+      "key": "D",
+      "label": "Tower_Foreign_object",
+      "folder": "塔杆/异物",
+      "color": "#60A5FA"
+    },
+    {
+      "key": "F",
+      "label": "Tower_Normal",
+      "folder": "塔杆/正常",
+      "color": "#34D399"
+    },
+    {
+      "key": "T",
+      "label": "待定",
+      "folder": "uncertain",
+      "color": "#95A5A6"
+    }
+  ],
+  "key_bindings": {
+    "next": "Right",
+    "prev": "Left",
+    "first": "Home",
+    "last": "End",
+    "zoom_in": "Ctrl+Plus",
+    "zoom_out": "Ctrl+Minus",
+    "zoom_fit": "0",
+    "zoom_100": "Ctrl+1",
+    "undo": "Ctrl+Z",
+    "crop_save": "Return",
+    "crop_small": "1",
+    "crop_medium": "2",
+    "crop_large": "3",
+    "fullscreen": "F11",
+    "toggle_info": "I"
+  },
+  "paths": {
+    "target_dir": "D:/code/project/缺陷分类/batch",
+    "crop_output_dir": "D:/code/project/缺陷分类/batch/corp",
+    "label_csv_dir": "labels",
+    "label_csv_name": "labels.csv",
+    "thumbnail_cache": "cache/thumbnails",
+    "log_dir": "logs",
+    "log_file": "logs/app.log"
+  }
+}

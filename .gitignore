@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+labels/
+crops/
+cache/
+logs/
+*.code-workspace

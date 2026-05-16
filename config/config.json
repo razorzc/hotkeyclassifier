@@ -48,49 +48,49 @@
     {
       "key": "Q",
       "label": "Line_Broken_strands",
-      "folder": "输电线/断股",
+      "folder": "输电线/断股/images",
       "color": "#FF6B6B"
     },
     {
       "key": "W",
       "label": "Line_Damage",
-      "folder": "输电线/损伤",
+      "folder": "输电线/损伤/images",
       "color": "#FF8C42"
     },
     {
       "key": "E",
       "label": "Line_Foreign_object",
-      "folder": "输电线/异物",
+      "folder": "输电线/异物/images",
       "color": "#FFD93D"
     },
     {
       "key": "R",
       "label": "Line_Normal",
-      "folder": "输电线/正常",
+      "folder": "输电线/正常/images",
       "color": "#6BCB77"
     },
     {
       "key": "A",
       "label": "Tower_Deformation",
-      "folder": "塔杆/变形",
+      "folder": "塔杆/变形/images",
       "color": "#C084FC"
     },
     {
       "key": "S",
       "label": "Tower_Corrosion",
-      "folder": "塔杆/锈蚀",
+      "folder": "塔杆/锈蚀/images",
       "color": "#F472B6"
     },
     {
       "key": "D",
       "label": "Tower_Foreign_object",
-      "folder": "塔杆/异物",
+      "folder": "塔杆/异物/images",
       "color": "#60A5FA"
     },
     {
       "key": "F",
       "label": "Tower_Normal",
-      "folder": "塔杆/正常",
+      "folder": "塔杆/正常/images",
       "color": "#34D399"
     },
     {
@@ -118,7 +118,7 @@
     "toggle_info": "I"
   },
   "paths": {
-    "target_dir": "D:/code/project/缺陷分类/batch",
+    "target_dir": "C:\\Users\\mxc_z\\AppData\\Local\\Temp\\t_e5ektsk9",
     "crop_output_dir": "D:/code/project/缺陷分类/batch/corp",
     "label_csv_dir": "labels",
     "label_csv_name": "labels.csv",

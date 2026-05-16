@@ -359,19 +359,26 @@ class MainWindow(QMainWindow):
         mapping = next((m for m in self._settings.class_mappings if m.label == label), None)
         folder = mapping.folder if mapping else label
 
-        # 2) 复制原图到目标目录下的分类子文件夹
+        # 2) 复制原图到目标目录，重命名为 label_6位流水号
         import shutil
+        import glob as glob_mod
         dst_dir = os.path.join(target_dir, folder)
         os.makedirs(dst_dir, exist_ok=True)
-        filename = os.path.basename(src)
-        dst = os.path.join(dst_dir, filename)
-        # 冲突处理
-        if os.path.exists(dst):
-            base, ext = os.path.splitext(dst)
-            counter = 1
-            while os.path.exists(f"{base}_{counter:03d}{ext}"):
-                counter += 1
-            dst = f"{base}_{counter:03d}{ext}"
+        ext = os.path.splitext(src)[1].lower()
+        # 计算下一个流水号（以 label 为文件名前缀）
+        prefix = mapping.label if mapping else label
+        existing = glob_mod.glob(os.path.join(dst_dir, f"{prefix}_*{ext}"))
+        max_seq = 0
+        for f in existing:
+            stem = os.path.splitext(os.path.basename(f))[0]
+            try:
+                num = int(stem.rsplit("_", 1)[-1])
+                max_seq = max(max_seq, num)
+            except ValueError:
+                pass
+        seq = max_seq + 1
+        new_filename = f"{prefix}_{seq:06d}{ext}"
+        dst = os.path.join(dst_dir, new_filename)
         shutil.copy2(src, dst)
         logger.info(f"Copied: {src} -> {dst}")
 
@@ -389,7 +396,7 @@ class MainWindow(QMainWindow):
                 )
 
         # 4) 记录标签
-        self._label_manager.append(src, label)
+        self._label_manager.append(src, label, new_filename=new_filename)
 
         # 5) 记录 undo
         saved_idx = self._image_manager.current_index()
@@ -408,8 +415,11 @@ class MainWindow(QMainWindow):
         self._viewer.set_crop_overlay(None)
         self._crop_size_name = ""
 
-        if self._settings.auto_next:
-            self._image_manager.go_next()
+        auto_next = self._settings.get("general.auto_next", True)
+        total = self._image_manager.total_count()
+        if auto_next and saved_idx < total - 1:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, lambda: self._image_manager.go_to(saved_idx + 1))
         else:
             self._image_manager.go_to(saved_idx)
 
@@ -491,6 +501,7 @@ class MainWindow(QMainWindow):
         from ui.settings_dialog import SettingsDialog
         dlg = SettingsDialog(self._settings, self)
         if dlg.exec():
+            self._settings.reload()
             self._crop_manager._output_dir = self._settings.target_dir
             self._viewer._load_key_maps()
             self._rebuild_drag_zones()

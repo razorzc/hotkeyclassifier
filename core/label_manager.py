@@ -23,16 +23,19 @@ class LabelManager(QObject):
                 for row in reader:
                     row.setdefault("timestamp", "")
                     row.setdefault("label", "")
+                    row.setdefault("new_filename", "")
                     self._rows.append(row)
                     self._seen.add(row.get("image_path", ""))
         except Exception:
             return
 
-    def append(self, image_path: str, label: str, timestamp: Optional[str] = None):
+    def append(self, image_path: str, label: str, new_filename: str = "",
+               timestamp: Optional[str] = None):
         if timestamp is None:
             timestamp = datetime.now(timezone.utc).isoformat()
         self._rows.append({
             "image_path": image_path,
+            "new_filename": new_filename,
             "label": label,
             "timestamp": timestamp,
         })
@@ -51,7 +54,7 @@ class LabelManager(QObject):
         os.makedirs(os.path.dirname(self._csv_path), exist_ok=True)
         tmp_path = self._csv_path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["image_path", "label", "timestamp"])
+            writer = csv.DictWriter(f, fieldnames=["image_path", "new_filename", "label", "timestamp"])
             writer.writeheader()
             writer.writerows(self._rows)
         os.replace(tmp_path, self._csv_path)

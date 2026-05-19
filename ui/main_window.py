@@ -41,8 +41,8 @@ class MainWindow(QMainWindow):
         self._blur_threshold = settings.blur_threshold
 
         self.setWindowTitle("电力巡检图像数据集构建工具")
-        self.setMinimumSize(1200, 800)
-        self.resize(1600, 1000)
+        self.setMinimumSize(800, 500)
+        self.resize(1400, 900)
         self._build_menu()
         self._build_ui()
         self._connect_signals()

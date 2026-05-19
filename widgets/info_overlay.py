@@ -48,5 +48,13 @@ class InfoOverlay(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self.move(8, 8)
+        self._reposition()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition()
+
+    def _reposition(self):
+        if self.parent():
+            self.move(8, 8)
         self.raise_()

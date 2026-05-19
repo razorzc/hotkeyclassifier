@@ -550,7 +550,7 @@ class SettingsDialog(QDialog):
         header.addStretch()
         add_btn = QPushButton("+ 添加")
         add_btn.setFixedWidth(70)
-        add_btn.clicked.connect(self._add_class_row)
+        add_btn.clicked.connect(lambda: self._add_class_row())
         header.addWidget(add_btn)
         layout.addLayout(header)
 
@@ -581,6 +581,7 @@ class SettingsDialog(QDialog):
         row.del_btn.clicked.connect(lambda: self._remove_class_row(row))
         self._class_rows.append(row)
         self._class_layout.addWidget(row)
+        self._class_container.adjustSize()
 
     def _remove_class_row(self, row):
         if len(self._class_rows) <= 1:
@@ -603,7 +604,7 @@ class SettingsDialog(QDialog):
         hdr.addStretch()
         add_btn = QPushButton("+ 添加")
         add_btn.setFixedWidth(70)
-        add_btn.clicked.connect(self._add_crop_row)
+        add_btn.clicked.connect(lambda: self._add_crop_row())
         hdr.addWidget(add_btn)
         layout.addLayout(hdr)
 
@@ -633,6 +634,7 @@ class SettingsDialog(QDialog):
         row.del_btn.clicked.connect(lambda: self._remove_crop_row(row))
         self._crop_rows.append(row)
         self._crop_layout.addWidget(row)
+        self._crop_container.adjustSize()
 
     def _remove_crop_row(self, row):
         if len(self._crop_rows) <= 1:

@@ -4,7 +4,7 @@ import signal
 import shutil
 
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 from core.settings import AppSettings
 from core.image_manager import ImageManager
@@ -61,6 +61,12 @@ def main():
     image_manager = ImageManager(settings)
     window = MainWindow(settings, image_manager)
     window.show()
+
+    def _check_update():
+        from core.updater import check_update
+        check_update(window)
+
+    QTimer.singleShot(1500, _check_update)
 
     sys.exit(app.exec())
 

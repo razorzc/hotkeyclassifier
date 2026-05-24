@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QGraphicsOpacityEffect
+from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 
@@ -27,11 +27,18 @@ class InfoOverlay(QWidget):
         self._resolution_label = QLabel()
         self._zoom_label = QLabel()
         self._index_label = QLabel()
+        self._status_label = QLabel()
+        self._status_label.setStyleSheet(
+            "color: #a6e3a1; font-weight: bold; font-size: 11px;"
+            "background-color: rgba(24, 37, 24, 220);"
+        )
 
-        for lbl in [self._filename_label, self._resolution_label, self._zoom_label, self._index_label]:
+        for lbl in [self._filename_label, self._resolution_label,
+                     self._zoom_label, self._index_label, self._status_label]:
             lbl.setFont(QFont("Microsoft YaHei", 10))
             layout.addWidget(lbl)
 
+        self._status_label.hide()
         self.adjustSize()
 
         self._hide_timer = QTimer(self)
@@ -39,11 +46,17 @@ class InfoOverlay(QWidget):
         self._hide_timer.timeout.connect(self.hide)
 
     def update_info(self, filename: str, resolution: str, zoom_percent: float,
-                    index: int, total: int, directory: str):
+                    index: int, total: int, directory: str,
+                    classified_label: str = "", classified_file: str = ""):
         self._filename_label.setText(filename)
-        self._resolution_label.setText(f"原始分辨率: {resolution}")  # 原始分辨率
-        self._zoom_label.setText(f"缩放: {zoom_percent:.0f}%")                    # 缩放
+        self._resolution_label.setText(f"原始分辨率: {resolution}")
+        self._zoom_label.setText(f"缩放: {zoom_percent:.0f}%")
         self._index_label.setText(f"{index + 1} / {total}")
+        if classified_label:
+            self._status_label.setText(f"已分类: {classified_label} → {classified_file}")
+            self._status_label.show()
+        else:
+            self._status_label.hide()
         self.adjustSize()
 
     def showEvent(self, event):

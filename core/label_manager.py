@@ -45,6 +45,12 @@ class LabelManager(QObject):
     def has_label(self, image_path: str) -> bool:
         return image_path in self._seen
 
+    def get_label_for(self, image_path: str) -> dict | None:
+        for row in self._rows:
+            if row.get("image_path") == image_path:
+                return row
+        return None
+
     def remove_entry(self, image_path: str):
         self._rows = [r for r in self._rows if r.get("image_path") != image_path]
         self._seen.discard(image_path)

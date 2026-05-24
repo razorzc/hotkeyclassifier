@@ -46,12 +46,6 @@
   ],
   "classifications": [
     {
-      "key": "Q",
-      "label": "Line_Broken_strands",
-      "folder": "输电线/断股/images",
-      "color": "#FF6B6B"
-    },
-    {
       "key": "W",
       "label": "Line_Damage",
       "folder": "输电线/损伤/images",
@@ -71,8 +65,8 @@
     },
     {
       "key": "A",
-      "label": "Tower_Deformation",
-      "folder": "塔杆/变形/images",
+      "label": "Tower_Other",
+      "folder": "塔杆/其他/images",
       "color": "#C084FC"
     },
     {
@@ -118,7 +112,7 @@
     "toggle_info": "I"
   },
   "paths": {
-    "target_dir": "C:\\Users\\mxc_z\\AppData\\Local\\Temp\\t_e5ektsk9",
+    "target_dir": "C:\\Users\\mxc_z\\AppData\\Local\\Temp\\t_ldm_r0ks",
     "crop_output_dir": "D:/code/project/缺陷分类/batch/corp",
     "label_csv_dir": "labels",
     "label_csv_name": "labels.csv",

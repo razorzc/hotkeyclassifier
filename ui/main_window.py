@@ -39,6 +39,7 @@ class MainWindow(QMainWindow):
         self._crop_size_name = ""
         self._blur_enabled = settings.get("general.blur_enabled", False)
         self._blur_threshold = settings.blur_threshold
+        self._classified_map: dict[str, str] = {}  # basename -> label
 
         self.setWindowTitle("电力巡检图像数据集构建工具")
         self.setMinimumSize(800, 500)
@@ -170,6 +171,13 @@ class MainWindow(QMainWindow):
         toolbar.addAction(undo_action)
         toolbar.addSeparator()
 
+        self._filter_action = QAction("∨ 仅未分类", self)
+        self._filter_action.setCheckable(True)
+        self._filter_action.setToolTip("切换显示：全部 / 仅未分类")
+        self._filter_action.triggered.connect(self._on_toggle_filter)
+        toolbar.addAction(self._filter_action)
+        toolbar.addSeparator()
+
         settings_btn = QAction("设置", self)
         settings_btn.triggered.connect(self._on_open_settings)
         toolbar.addAction(settings_btn)
@@ -220,12 +228,16 @@ class MainWindow(QMainWindow):
             self._save_progress()
             # 加载新文件夹进度
             data = self._progress.load(path)
+            self._classified_map = data.get("classified", {})
             self._image_manager.load_directory(path)
             # 恢复上次进度
             saved_idx = data.get("current_index", 0)
             total = self._image_manager.total_count()
             if 0 < saved_idx < total:
                 self._image_manager.go_to(saved_idx)
+            # 如果筛选模式开启，重新应用
+            if self._filter_action and self._filter_action.isChecked():
+                self._apply_unclassified_filter()
             # 更新状态提示
             classified = data.get("classified", {})
             if classified:
@@ -233,6 +245,23 @@ class MainWindow(QMainWindow):
                     f"已加载进度: {len(classified)} 张已分类 | 当前 {saved_idx + 1}/{total}"
                 )
                 self._status_label.setStyleSheet("color: #a6e3a1; font-weight: bold;")
+
+    def _on_toggle_filter(self, checked: bool):
+        if checked:
+            self._filter_action.setText("∨ 仅未分类")
+            self._apply_unclassified_filter()
+        else:
+            self._filter_action.setText("∧ 全部图片")
+            self._image_manager.clear_filter()
+
+    def _apply_unclassified_filter(self):
+        excluded = set()
+        for row in self._label_manager.get_labels():
+            excluded.add(row["image_path"])
+        self._image_manager.apply_filter(excluded)
+        total = self._image_manager.total_count()
+        self._status_label.setText(f"仅未分类: {total} 张")
+        self._status_label.setStyleSheet("color: #89b4fa; font-weight: bold;")
 
     def _on_list_changed(self):
         total = self._image_manager.total_count()
@@ -247,6 +276,21 @@ class MainWindow(QMainWindow):
     def _on_image_loaded(self, path: str, pixmap):
         self._viewer.set_image(pixmap)
         filename = os.path.basename(path)
+
+        # 查分类状态（优先 .sort_progress.json，其次 labels.csv）
+        classified_label = ""
+        classified_file = ""
+        basename = os.path.basename(path)
+        if basename in self._classified_map:
+            classified_label = self._classified_map[basename]
+            info = self._label_manager.get_label_for(path)
+            classified_file = info.get("new_filename", "") if info else ""
+        else:
+            info = self._label_manager.get_label_for(path)
+            if info:
+                classified_label = info.get("label", "")
+                classified_file = info.get("new_filename", "")
+
         self._info_overlay.update_info(
             filename=filename,
             resolution=f"{pixmap.width()}x{pixmap.height()}",
@@ -254,6 +298,8 @@ class MainWindow(QMainWindow):
             index=self._image_manager.current_index(),
             total=self._image_manager.total_count(),
             directory=self._image_manager.current_dir,
+            classified_label=classified_label,
+            classified_file=classified_file,
         )
         self._info_overlay.show()
 
@@ -397,6 +443,7 @@ class MainWindow(QMainWindow):
 
         # 4) 记录标签
         self._label_manager.append(src, label, new_filename=new_filename)
+        self._classified_map[os.path.basename(src)] = label
 
         # 5) 记录 undo
         saved_idx = self._image_manager.current_index()
@@ -466,6 +513,7 @@ class MainWindow(QMainWindow):
         # 删除 CSV 记录（用原始路径查找）
         csv_key = entry.original_src or entry.src_path
         self._label_manager.remove_entry(csv_key)
+        self._classified_map.pop(os.path.basename(csv_key), None)
 
         # 回到当时的图片位置
         target_idx = min(entry.original_index, self._image_manager.total_count() - 1)

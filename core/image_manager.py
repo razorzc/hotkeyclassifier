@@ -18,6 +18,7 @@ class ImageManager(QObject):
         super().__init__(parent)
         self._settings = settings
         self._file_list: list[str] = []
+        self._all_files: list[str] = []  # 完整未过滤列表
         self._current_index: int = -1
         self._current_dir: str = ""
         self._pixmap_cache: dict[int, QPixmap] = {}
@@ -28,6 +29,7 @@ class ImageManager(QObject):
             return 0
         self._current_dir = path
         self._file_list.clear()
+        self._all_files.clear()
         self._pixmap_cache.clear()
         formats = self._settings.supported_formats
         for entry in sorted(os.listdir(path)):
@@ -36,11 +38,33 @@ class ImageManager(QObject):
                 ext = os.path.splitext(entry)[1].lower()
                 if ext in formats:
                     self._file_list.append(full)
+        self._all_files = self._file_list.copy()
         self._current_index = 0 if self._file_list else -1
         self.image_list_changed.emit()
         if self._file_list:
             self._load_and_emit(0)
         return len(self._file_list)
+
+    def apply_filter(self, excluded_paths: set):
+        """过滤掉已分类图片。"""
+        self._all_files = self._file_list.copy() if not self._all_files else self._all_files
+        self._file_list = [f for f in self._all_files if f not in excluded_paths]
+        self._current_index = 0 if self._file_list else -1
+        self._pixmap_cache.clear()
+        self.image_list_changed.emit()
+        if self._file_list:
+            self._load_and_emit(0)
+
+    def clear_filter(self):
+        """显示全部图片。"""
+        if self._all_files:
+            self._file_list = self._all_files.copy()
+            self._all_files = []
+        self._current_index = 0 if self._file_list else -1
+        self._pixmap_cache.clear()
+        self.image_list_changed.emit()
+        if self._file_list:
+            self._load_and_emit(0)
 
     def current_path(self) -> Optional[str]:
         if 0 <= self._current_index < len(self._file_list):

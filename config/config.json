@@ -12,7 +12,8 @@
     "blur_threshold": 100.0,
     "blur_enabled": false,
     "auto_next": true,
-    "skip_classified": false
+    "skip_classified": false,
+    "username": "zjc"
   },
   "display": {
     "zoom_step": 0.15,
@@ -26,65 +27,71 @@
   },
   "crop_sizes": [
     {
-      "key": "1",
       "name": "224x224",
+      "key": "1",
       "width": 224,
       "height": 224
     },
     {
-      "key": "2",
       "name": "384x384",
+      "key": "2",
       "width": 384,
       "height": 384
     },
     {
-      "key": "3",
       "name": "640x640",
+      "key": "3",
       "width": 640,
       "height": 640
     }
   ],
   "classifications": [
     {
+      "key": "Q",
+      "label": "Line_Broken_strands",
+      "folder": "输电线/断股",
+      "color": "#FF6B6B"
+    },
+    {
       "key": "W",
       "label": "Line_Damage",
-      "folder": "输电线/损伤/images",
+      "folder": "输电线/损伤",
       "color": "#FF8C42"
     },
     {
       "key": "E",
       "label": "Line_Foreign_object",
-      "folder": "输电线/异物/images",
+      "folder": "输电线/异物",
       "color": "#FFD93D"
     },
     {
       "key": "R",
       "label": "Line_Normal",
-      "folder": "输电线/正常/images",
+      "folder": "输电线/正常",
       "color": "#6BCB77"
     },
     {
       "key": "A",
-      "label": "Tower_Other",
-      "folder": "塔杆/其他/images",
+      "label": "Tower_Deformation",
+      "folder": "塔杆/变形",
       "color": "#C084FC"
     },
     {
       "key": "S",
       "label": "Tower_Corrosion",
-      "folder": "塔杆/锈蚀/images",
+      "folder": "塔杆/锈蚀",
       "color": "#F472B6"
     },
     {
       "key": "D",
       "label": "Tower_Foreign_object",
-      "folder": "塔杆/异物/images",
+      "folder": "塔杆/异物",
       "color": "#60A5FA"
     },
     {
       "key": "F",
       "label": "Tower_Normal",
-      "folder": "塔杆/正常/images",
+      "folder": "塔杆/正常",
       "color": "#34D399"
     },
     {
@@ -112,8 +119,8 @@
     "toggle_info": "I"
   },
   "paths": {
-    "target_dir": "C:\\Users\\mxc_z\\AppData\\Local\\Temp\\t_ldm_r0ks",
-    "crop_output_dir": "D:/code/project/缺陷分类/batch/corp",
+    "target_dir": "D:/code/project/缺陷分类/batch",
+    "crop_output_dir": "crops",
     "label_csv_dir": "labels",
     "label_csv_name": "labels.csv",
     "thumbnail_cache": "cache/thumbnails",

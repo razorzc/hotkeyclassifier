@@ -404,6 +404,11 @@ class SettingsDialog(QDialog):
         title.setStyleSheet("font-size: 15px; font-weight: bold; color: #89b4fa; margin-bottom: 8px;")
         form.addRow(title)
 
+        self._username_edit = QLineEdit()
+        self._username_edit.setText(self._settings.get("general.username", ""))
+        self._username_edit.setPlaceholderText("多人协作时的标注人标识")
+        form.addRow(QLabel("用户名:"), self._username_edit)
+
         self._preload_spin = QSpinBox()
         self._preload_spin.setRange(1, 20)
         self._preload_spin.setValue(self._settings.get("general.preload_count", 5))
@@ -645,6 +650,7 @@ class SettingsDialog(QDialog):
 
     # ── Apply / OK ────────────────────────────────────────
     def _on_apply(self):
+        self._settings.set("general.username", self._username_edit.text().strip())
         self._settings.set("general.preload_count", self._preload_spin.value())
         self._settings.set("general.blur_threshold", self._blur_thresh_spin.value())
         self._settings.set("general.auto_next", self._auto_next_cb.isChecked())

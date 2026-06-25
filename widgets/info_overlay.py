@@ -24,14 +24,13 @@ class InfoOverlay(QWidget):
 
         self._filename_label = QLabel()
         self._filename_label.setFont(QFont("Microsoft YaHei", 11, QFont.Bold))
+
         self._resolution_label = QLabel()
         self._zoom_label = QLabel()
         self._index_label = QLabel()
+
         self._status_label = QLabel()
-        self._status_label.setStyleSheet(
-            "color: #a6e3a1; font-weight: bold; font-size: 11px;"
-            "background-color: rgba(24, 37, 24, 220);"
-        )
+        self._status_label.setFont(QFont("Microsoft YaHei", 9))
 
         for lbl in [self._filename_label, self._resolution_label,
                      self._zoom_label, self._index_label, self._status_label]:
@@ -47,13 +46,27 @@ class InfoOverlay(QWidget):
 
     def update_info(self, filename: str, resolution: str, zoom_percent: float,
                     index: int, total: int, directory: str,
-                    classified_label: str = "", classified_file: str = ""):
+                    classified_label: str = "", classified_by: str = "",
+                    classified_at: str = "", multi_count: int = 0):
         self._filename_label.setText(filename)
         self._resolution_label.setText(f"原始分辨率: {resolution}")
         self._zoom_label.setText(f"缩放: {zoom_percent:.0f}%")
         self._index_label.setText(f"{index + 1} / {total}")
+
         if classified_label:
-            self._status_label.setText(f"已分类: {classified_label} → {classified_file}")
+            parts = [classified_label]
+            if classified_by:
+                parts.append(classified_by)
+            if classified_at:
+                parts.append(classified_at)
+            text = " | ".join(parts)
+            if multi_count > 1:
+                text = f"[{multi_count}人标注] {text}"
+            self._status_label.setText(text)
+            self._status_label.setStyleSheet(
+                "color: #a6e3a1; font-weight: bold; font-size: 10px;"
+                "background-color: rgba(24, 37, 24, 220);"
+            )
             self._status_label.show()
         else:
             self._status_label.hide()

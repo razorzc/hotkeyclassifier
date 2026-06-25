@@ -114,6 +114,14 @@ class MainWindow(QMainWindow):
         settings_action.triggered.connect(self._on_open_settings)
         tools_menu.addAction(settings_action)
 
+        help_menu = menu.addMenu("帮助(&H)")
+        update_action = QAction("检查更新(&U)...", self)
+        update_action.triggered.connect(self._on_check_update)
+        help_menu.addAction(update_action)
+        about_action = QAction("关于(&A)...", self)
+        about_action.triggered.connect(self._on_about)
+        help_menu.addAction(about_action)
+
     # ── UI Layout ─────────────────────────────────────────
     def _build_ui(self):
         self._build_toolbar()
@@ -641,3 +649,21 @@ class MainWindow(QMainWindow):
             zone.image_dropped.connect(self._on_drag_classify)
             self._drag_zones.append(zone)
             self._zone_layout.insertWidget(self._zone_layout.count() - 1, zone)
+
+    # ── Help / About ───────────────────────────────────────
+    def _on_check_update(self):
+        from core.updater import check_update
+        check_update(self, silent=False)
+
+    def _on_about(self):
+        from core.updater import get_version
+        QMessageBox.about(
+            self,
+            "关于 PowerLineCV",
+            f"<h3>电力巡检图像数据集构建工具</h3>"
+            f"<p>版本: v{get_version()}</p>"
+            f"<p>面向计算机视觉数据集构建的桌面应用，<br>"
+            f"用于巡检图像的快速筛选、分类、裁剪与标注。</p>"
+            f"<p>GitHub: <a href='https://github.com/razorzc/hotkeyclassifier'>razorzc/hotkeyclassifier</a></p>"
+            f"<p style='color:#a6adc8;font-size:11px;'>PySide6 + Python 3.12</p>"
+        )

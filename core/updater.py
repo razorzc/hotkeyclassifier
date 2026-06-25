@@ -1,20 +1,31 @@
+"""启动时检查 GitHub 是否有新版本。"""
 import json
 import urllib.request
 import urllib.error
-from datetime import datetime, timezone
 
 from PySide6.QtWidgets import QMessageBox
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 
-APP_VERSION = "1.0.0"
-# 上次已知构建日期，发行版发布时间晚于此则认为有新版本
-BUILD_DATE = "2026-05-17T00:00:00Z"
-REPO_API = "https://api.github.com/repos/razorzc/hotkeyclassify/releases/latest"
-DOWNLOAD_URL = "https://github.com/razorzc/hotkeyclassify/releases/latest"
+APP_VERSION = "1.0.3"
+# 检查所有 release（不限于 latest）
+RELEASES_API = "https://api.github.com/repos/razorzc/hotkeyclassify/releases"
+DOWNLOAD_URL = "https://github.com/razorzc/hotkeyclassify/releases/tag/"
 
 
-def _fetch_json(url: str) -> dict | None:
+def _parse_version(tag: str):
+    """从 tag 中提取版本元组，如 v1.0.3 -> (1, 0, 3)。"""
+    v = tag.lstrip("vV")
+    try:
+        parts = [int(x) for x in v.split(".")]
+        while len(parts) < 3:
+            parts.append(0)
+        return tuple(parts[:3])
+    except (ValueError, IndexError):
+        return (0, 0, 0)
+
+
+def _fetch_json(url: str) -> list | None:
     try:
         req = urllib.request.Request(url)
         req.add_header("Accept", "application/vnd.github+json")
@@ -26,25 +37,26 @@ def _fetch_json(url: str) -> dict | None:
 
 
 def check_update(parent) -> bool:
-    """检查 GitHub 是否有比本地更新的版本。返回 True 表示弹出过更新提示。"""
-    data = _fetch_json(REPO_API)
-    if not data:
+    """检查远程是否有比本地版本号更高的版本。"""
+    current_ver = _parse_version(APP_VERSION)
+
+    releases = _fetch_json(RELEASES_API + "?per_page=10")
+    if not releases:
         return False
 
-    published = data.get("published_at", "")
-    tag = data.get("tag_name", "")
-    body = (data.get("body") or "")[:200]
+    latest_tag = ""
+    latest_ver = (0, 0, 0)
+    for rel in releases:
+        tag = rel.get("tag_name", "")
+        ver = _parse_version(tag)
+        if ver > latest_ver:
+            latest_ver = ver
+            latest_tag = tag
 
-    try:
-        remote_date = datetime.fromisoformat(published.replace("Z", "+00:00"))
-        build_date = datetime.fromisoformat(BUILD_DATE.replace("Z", "+00:00"))
-    except ValueError:
+    if latest_ver <= current_ver:
         return False
 
-    if remote_date <= build_date:
-        return False  # 没有新版本
-
-    msg = f"GitHub 上有新版本可用\n\n版本: {tag}\n发布时间: {published[:10]}\n\n{body}"
+    msg = f"GitHub 上有新版本可用\n\n当前版本: v{APP_VERSION}\n最新版本: {latest_tag}\n\n是否前往下载？"
     reply = QMessageBox.question(
         parent,
         "发现新版本",
@@ -53,6 +65,6 @@ def check_update(parent) -> bool:
         QMessageBox.Yes,
     )
     if reply == QMessageBox.Yes:
-        QDesktopServices.openUrl(QUrl(DOWNLOAD_URL))
+        QDesktopServices.openUrl(QUrl(DOWNLOAD_URL + latest_tag))
         return True
     return False

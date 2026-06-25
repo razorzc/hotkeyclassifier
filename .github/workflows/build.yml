@@ -49,8 +49,9 @@ jobs:
           tag_name: "nightly"
           prerelease: true
           files: dist/PowerLineCV.exe
+          make_latest: false
           body: |
-            自动构建，基于最新 master 分支。
+            Nightly 构建，基于最新 master 分支。
 
             **下载** `PowerLineCV.exe` 双击运行即可。
         env:

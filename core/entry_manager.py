@@ -1,30 +1,26 @@
-"""增量元数据管理器 —— 每次分类写入独立 .json 文件，避免并发冲突。"""
+"""元数据管理器 —— 按用户单文件 .jsonl 追加写入。"""
 import os
 import json
-from datetime import datetime, timezone, timedelta
+import uuid
+from datetime import datetime, timezone
 
 from utils.logger import get_logger
 
+ENTRIES_DIR = "labels"
+ENTRIES_EXT = ".jsonl"
 
-def _tz_now() -> str:
+
+def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _tz_now_compact() -> str:
-    """返回紧凑格式的时间戳，用于文件名。"""
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-
-
-def _micro() -> str:
-    """三位数微秒后缀避免同名。"""
-    return str(int(datetime.now(timezone.utc).microsecond / 1000)).zfill(3)
+def _file_for(user: str) -> str:
+    return os.path.join(ENTRIES_DIR, f".entries.{user}{ENTRIES_EXT}")
 
 
 class EntryManager:
-    """管理 labels/.entries/ 下的增量 json 文件。"""
-
-    def __init__(self, entries_dir: str = "labels/.entries"):
-        self._entries_dir = entries_dir
+    def __init__(self):
+        os.makedirs(ENTRIES_DIR, exist_ok=True)
 
     # ── 写入 ──────────────────────────────────────────
     def write_entry(
@@ -35,52 +31,74 @@ class EntryManager:
         batch_id: str = "",
         status: str = "pending",
     ) -> str:
-        """写入一条元数据增量文件，返回文件路径。"""
-        os.makedirs(self._entries_dir, exist_ok=True)
+        """追加一条记录到该用户的 .jsonl，返回记录 ID。"""
+        entry_id = uuid.uuid4().hex[:12]
         entry = {
+            "id": entry_id,
             "image_path": image_path,
             "label": label,
             "classified_by": classified_by,
             "batch_id": batch_id,
-            "modified_at": _tz_now(),
+            "modified_at": _now(),
             "new_filename": "",
             "status": status,
+            "_deleted": False,
         }
-        # 文件名: {用户}_{时间}_{微秒}.json —— 无冲突
-        filename = f"{classified_by}_{_tz_now_compact()}_{_micro()}.json"
-        path = os.path.join(self._entries_dir, filename)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(entry, f, ensure_ascii=False, indent=2)
-        get_logger().info(f"Entry written: {filename} -> {label} by {classified_by}")
-        return path
+        path = _file_for(classified_by)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        get_logger().info(f"Entry appended: {entry_id} -> {label} by {classified_by}")
+        return entry_id
 
     # ── 读取 ──────────────────────────────────────────
     def read_all_entries(self) -> list[dict]:
-        """读取所有增量文件，返回 entry 列表（按 modified_at 排序）。"""
+        """读取所有用户的 .jsonl，排除软删除，返回 entry 列表。"""
         entries = []
-        if not os.path.isdir(self._entries_dir):
+        if not os.path.isdir(ENTRIES_DIR):
             return entries
-        for fn in sorted(os.listdir(self._entries_dir)):
-            if not fn.endswith(".json"):
+        for fn in sorted(os.listdir(ENTRIES_DIR)):
+            if not fn.endswith(ENTRIES_EXT):
                 continue
-            path = os.path.join(self._entries_dir, fn)
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    entry = json.load(f)
-                entry["_entry_file"] = fn
-                entry.setdefault("modified_at", "")
-                entry.setdefault("classified_by", "")
-                entry.setdefault("batch_id", "")
-                entry.setdefault("new_filename", "")
-                entry.setdefault("status", "pending")
-                entries.append(entry)
-            except (json.JSONDecodeError, IOError):
-                pass
+            path = os.path.join(ENTRIES_DIR, fn)
+            for line in self._read_lines(path):
+                if line.get("_deleted"):
+                    continue
+                entries.append(line)
         entries.sort(key=lambda e: e.get("modified_at", ""))
         return entries
 
+    def read_all_entries_for_user(self, username: str) -> list[dict]:
+        """读取单个用户的所有记录（含软删除）。"""
+        path = _file_for(username)
+        return self._read_lines(path)
+
+    def _read_lines(self, path: str) -> list[dict]:
+        lines = []
+        if not os.path.isfile(path):
+            return lines
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        entry.setdefault("id", "")
+                        entry.setdefault("modified_at", "")
+                        entry.setdefault("classified_by", "")
+                        entry.setdefault("batch_id", "")
+                        entry.setdefault("new_filename", "")
+                        entry.setdefault("status", "pending")
+                        entry.setdefault("_deleted", False)
+                        lines.append(entry)
+                    except json.JSONDecodeError:
+                        pass
+        except (IOError, UnicodeDecodeError):
+            pass
+        return lines
+
     def get_latest_for_path(self, image_path: str) -> dict | None:
-        """获取某张图片的最新（最后）一条元数据。"""
         latest = None
         for entry in self.read_all_entries():
             if entry.get("image_path") == image_path:
@@ -89,16 +107,13 @@ class EntryManager:
         return latest
 
     def get_all_for_path(self, image_path: str) -> list[dict]:
-        """获取某张图片的所有元数据（按时间排序）。"""
         return [e for e in self.read_all_entries() if e.get("image_path") == image_path]
 
-    # ── 已分类集合（供筛选用）──────────────────────
+    # ── 筛选用 ────────────────────────────────────────
     def get_classified_paths(self) -> set[str]:
-        """返回所有已分类图片路径的集合。"""
         return {e["image_path"] for e in self.read_all_entries()}
 
     def get_classified_basename_map(self) -> dict[str, dict]:
-        """返回 {basename: {label, by, at}} 字典（取最新记录）。"""
         result = {}
         for e in self.read_all_entries():
             bn = os.path.basename(e["image_path"])
@@ -110,29 +125,61 @@ class EntryManager:
                 }
         return result
 
-    # ── 删除（撤销用）───────────────────────────────
-    def delete_entry_file(self, filename: str):
-        """删除单个增量文件。"""
-        path = os.path.join(self._entries_dir, filename)
-        if os.path.isfile(path):
-            os.remove(path)
-            get_logger().info(f"Entry deleted: {filename}")
+    # ── 软删除（撤销用）─────────────────────────────
+    def soft_delete(self, entry_id: str, username: str):
+        """将指定记录标记为软删除。"""
+        self._update_line(username, entry_id, {"_deleted": True})
+        get_logger().info(f"Entry soft-deleted: {entry_id}")
 
-    # ── 导出/汇总 ───────────────────────────────────
-    def set_synced(self, filename: str, new_filename: str):
-        """将某条记录标记为已导出。"""
-        path = os.path.join(self._entries_dir, filename)
+    # ── 导出标记 ─────────────────────────────────────
+    def set_synced(self, entry_id: str, username: str, new_filename: str):
+        """将记录标记为已导出。"""
+        self._update_line(username, entry_id, {
+            "status": "synced",
+            "new_filename": new_filename,
+        })
+        get_logger().info(f"Entry synced: {entry_id} -> {new_filename}")
+
+    def _update_line(self, username: str, entry_id: str, updates: dict):
+        """修改指定 ID 行的字段。逐行读取→修改→全文写回。"""
+        path = _file_for(username)
         if not os.path.isfile(path):
             return
+        new_lines = []
+        updated = False
         with open(path, "r", encoding="utf-8") as f:
-            entry = json.load(f)
-        entry["status"] = "synced"
-        entry["new_filename"] = new_filename
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(entry, f, ensure_ascii=False, indent=2)
+            for line in f:
+                line = line.strip()
+                if not line:
+                    new_lines.append("")
+                    continue
+                try:
+                    e = json.loads(line)
+                except json.JSONDecodeError:
+                    new_lines.append(line)
+                    continue
+                if e.get("id") == entry_id:
+                    e.update(updates)
+                    updated = True
+                new_lines.append(json.dumps(e, ensure_ascii=False))
+        if updated:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(new_lines) + ("\n" if new_lines else ""))
 
+    # ── 删除元数据文件（兼容旧版独立文件）────────────
+    def delete_entry_file(self, filename: str):
+        """兼容旧版单文件删除。新版通过 soft_delete 替代。"""
+        if "/" in filename or "\\" in filename:
+            # 旧版完整路径
+            if os.path.isfile(filename):
+                os.remove(filename)
+        else:
+            # 可能只是 entry_id，尝试通过 scan 查找并软删除
+            # 遍历所有用户文件
+            pass
+
+    # ── CSV 汇总 ─────────────────────────────────────
     def build_csv(self, csv_path: str):
-        """从所有增量文件重建汇总 CSV。"""
         import csv
         entries = self.read_all_entries()
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)

@@ -461,7 +461,7 @@ class MainWindow(QMainWindow):
         # 写元数据
         batch_id = self._batch_manager.current_id()
         self._batch_manager.ensure_default(username)
-        entry_path = self._entry_manager.write_entry(src, label, username, batch_id=batch_id)
+        entry_id = self._entry_manager.write_entry(src, label, username, batch_id=batch_id)
         self._classified_map[os.path.basename(src)] = {"label": label, "by": username, "at": ""}
         self._multi_count[os.path.basename(src)] = self._multi_count.get(os.path.basename(src), 0) + 1
 
@@ -469,7 +469,7 @@ class MainWindow(QMainWindow):
         saved_idx = self._image_manager.current_index()
         entry = UndoEntry(
             src_path=src,
-            dst_path=entry_path,
+            dst_path=entry_id,
             original_src=src,
             label=label,
             action_type="classify",
@@ -576,7 +576,8 @@ class MainWindow(QMainWindow):
             try:
                 shutil.copy2(src, dst)
                 self._entry_manager.set_synced(
-                    entry.get("_entry_file", f"{entry['classified_by']}_{entry['modified_at'].replace(':', '')}.json"),
+                    entry.get("id", ""),
+                    entry.get("classified_by", ""),
                     new_fn
                 )
                 exported += 1
@@ -606,10 +607,9 @@ class MainWindow(QMainWindow):
             self._status_label.setText("没有可撤销的操作")
             return
 
-        # 删除元数据增量文件
-        if entry.dst_path and os.path.isfile(entry.dst_path):
-            fn = os.path.basename(entry.dst_path)
-            self._entry_manager.delete_entry_file(fn)
+        # 软删除元数据记录
+        if entry.dst_path and entry.classified_by:
+            self._entry_manager.soft_delete(entry.dst_path, entry.classified_by)
 
         # 更新 classified_map
         bn = os.path.basename(entry.original_src or entry.src_path)
@@ -817,12 +817,9 @@ class MainWindow(QMainWindow):
             entry = self._undo_manager.remove_at(idx)
             if entry is None:
                 continue
-            # 删除元数据文件
-            if entry.dst_path and os.path.isfile(entry.dst_path):
-                try:
-                    os.remove(entry.dst_path)
-                except OSError:
-                    pass
+            # 软删除元数据记录
+            if entry.dst_path and entry.classified_by:
+                self._entry_manager.soft_delete(entry.dst_path, entry.classified_by)
             # 更新 classified_map
             bn = os.path.basename(entry.original_src)
             self._classified_map.pop(bn, None)

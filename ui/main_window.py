@@ -2,15 +2,16 @@ import os
 from datetime import datetime, timezone
 
 from PySide6.QtWidgets import (
-    QMainWindow, QToolBar, QStatusBar, QWidget,
+    QMainWindow, QToolBar, QStatusBar, QWidget, QMessageBox,
     QVBoxLayout, QHBoxLayout, QSplitter, QLabel, QFileDialog, QMenuBar,
+    QInputDialog, QProgressDialog, QApplication,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 
 from core.settings import AppSettings
 from core.image_manager import ImageManager
-from core.label_manager import LabelManager
+from core.entry_manager import EntryManager
 from core.undo_manager import UndoManager, UndoEntry
 from core.crop_manager import CropManager
 from core.preload_manager import PreloadManager
@@ -24,11 +25,11 @@ class MainWindow(QMainWindow):
         self._settings = settings
         self._image_manager = image_manager
 
-        self._label_manager = LabelManager(settings.label_csv_path)
+        self._entry_manager = EntryManager()
         self._undo_manager = UndoManager(settings.max_undo_depth)
         self._crop_manager = CropManager(settings.target_dir)
         self._preload_manager = PreloadManager(settings)
-        self._progress = ProgressManager()
+        self._progress = ProgressManager(settings.get("general.username", ""))
 
         self._viewer = None
         self._info_overlay = None
@@ -39,21 +40,40 @@ class MainWindow(QMainWindow):
         self._crop_size_name = ""
         self._blur_enabled = settings.get("general.blur_enabled", False)
         self._blur_threshold = settings.blur_threshold
-        self._classified_map: dict[str, str] = {}  # basename -> label
+        self._classified_map: dict[str, dict] = {}       # basename -> {label, by, at}
+        self._multi_count: dict[str, int] = {}           # basename -> 标注人数
 
         self.setWindowTitle("电力巡检图像数据集构建工具")
         self.setMinimumSize(800, 500)
         self.resize(1400, 900)
+        self._ensure_username()
         self._build_menu()
         self._build_ui()
         self._connect_signals()
         self._apply_dark_theme()
-        self._check_target_dir_on_startup()
 
-    def _check_target_dir_on_startup(self):
-        target = self._settings.target_dir
-        if not target or not os.path.isdir(target):
-            self._status_label.setText("请先在设置中指定分类输出目标目录")
+    # ── Username ──────────────────────────────────────────
+    def _ensure_username(self):
+        user = self._settings.get("general.username", "")
+        if user:
+            self._progress.set_username(user)
+            return
+        # 延迟弹窗
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(200, self._prompt_username)
+
+    def _prompt_username(self):
+        name, ok = QInputDialog.getText(
+            self, "设置用户名", "首次使用请输入用户名（用于协作标注）:",
+            text="user"
+        )
+        if ok and name.strip():
+            self._settings.set("general.username", name.strip())
+            self._settings.save()
+            self._progress.set_username(name.strip())
+            self._status_label.setText(f"欢迎, {name.strip()}!")
+        elif not self._settings.get("general.username", ""):
+            self._status_label.setText("未设置用户名，请到设置→通用中配置")
             self._status_label.setStyleSheet("color: #FFD93D; font-weight: bold;")
 
     # ── Menu ──────────────────────────────────────────────
@@ -66,6 +86,11 @@ class MainWindow(QMainWindow):
         open_action.setShortcut(QKeySequence("Ctrl+O"))
         open_action.triggered.connect(self._on_open_directory)
         file_menu.addAction(open_action)
+        file_menu.addSeparator()
+        export_action = QAction("导出到目标目录(&E)...", self)
+        export_action.setShortcut(QKeySequence("Ctrl+E"))
+        export_action.triggered.connect(self._on_export)
+        file_menu.addAction(export_action)
         file_menu.addSeparator()
         exit_action = QAction("退出(&X)", self)
         exit_action.setShortcut(QKeySequence("Alt+F4"))
@@ -98,7 +123,6 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Center: Image viewer + info overlay ────────
         from widgets.image_viewer import ImageViewer
         self._viewer = ImageViewer(self._settings)
 
@@ -111,7 +135,6 @@ class MainWindow(QMainWindow):
         viewer_layout.setContentsMargins(0, 0, 0, 0)
         viewer_layout.addWidget(self._viewer)
 
-        # ── Right: Drag zones ──────────────────────────
         from widgets.drag_zone import DragZone
         self._drag_zones = []
         zone_container = QWidget()
@@ -165,17 +188,23 @@ class MainWindow(QMainWindow):
             toolbar.addAction(action)
 
         toolbar.addSeparator()
-        undo_action = QAction("↩ 撤销", self)
-        undo_action.setToolTip("Ctrl+Z")
-        undo_action.triggered.connect(self._on_undo)
-        toolbar.addAction(undo_action)
-        toolbar.addSeparator()
-
         self._filter_action = QAction("∨ 仅未分类", self)
         self._filter_action.setCheckable(True)
         self._filter_action.setToolTip("切换显示：全部 / 仅未分类")
         self._filter_action.triggered.connect(self._on_toggle_filter)
         toolbar.addAction(self._filter_action)
+        toolbar.addSeparator()
+
+        export_btn = QAction("导出", self)
+        export_btn.setToolTip("将已分类图片批量复制到目标目录")
+        export_btn.triggered.connect(self._on_export)
+        toolbar.addAction(export_btn)
+        toolbar.addSeparator()
+
+        undo_action = QAction("↩ 撤销", self)
+        undo_action.setToolTip("Ctrl+Z")
+        undo_action.triggered.connect(self._on_undo)
+        toolbar.addAction(undo_action)
         toolbar.addSeparator()
 
         settings_btn = QAction("设置", self)
@@ -190,7 +219,6 @@ class MainWindow(QMainWindow):
 
     def _apply_dark_theme(self):
         config_dir = os.path.dirname(self._settings.config_path)
-        # 优先从 config 目录加载，回退到源码目录
         qss_path = os.path.join(config_dir, "dark_theme.qss")
         if not os.path.exists(qss_path):
             import sys
@@ -215,53 +243,33 @@ class MainWindow(QMainWindow):
         self._viewer.crop_size_changed.connect(self._on_crop_size_changed)
         self._viewer.zoom_changed.connect(self._on_zoom_changed)
         self._preload_manager.preload_ready.connect(self._on_preload_ready)
-        self._crop_manager.crop_saved.connect(self._on_crop_file_saved)
-        self._crop_manager.crop_error.connect(
-            lambda p, e: self._status_label.setText(f"裁剪失败: {e}")
-        )
 
     # ── Slots: Navigation ─────────────────────────────────
     def _on_open_directory(self):
         path = QFileDialog.getExistingDirectory(self, "选择图片文件夹")
         if path:
-            # 保存旧进度
             self._save_progress()
-            # 加载新文件夹进度
-            data = self._progress.load(path)
-            self._classified_map = data.get("classified", {})
+            # 合并所有用户进度 + entry_manager 元数据
+            self._classified_map = self._progress.get_merged_classified(path)
+            self._multi_count.clear()
+            all_entries = self._entry_manager.read_all_entries()
+            for e in all_entries:
+                bn = os.path.basename(e["image_path"])
+                self._multi_count[bn] = self._multi_count.get(bn, 0) + 1
+            data = self._progress.load_my(path)
             self._image_manager.load_directory(path)
-            # 恢复上次进度
             saved_idx = data.get("current_index", 0)
             total = self._image_manager.total_count()
             if 0 < saved_idx < total:
                 self._image_manager.go_to(saved_idx)
-            # 如果筛选模式开启，重新应用
             if self._filter_action and self._filter_action.isChecked():
                 self._apply_unclassified_filter()
-            # 更新状态提示
-            classified = data.get("classified", {})
-            if classified:
+            classified_count = len(self._classified_map)
+            if classified_count:
                 self._status_label.setText(
-                    f"已加载进度: {len(classified)} 张已分类 | 当前 {saved_idx + 1}/{total}"
+                    f"已加载: {classified_count} 张已分类 | 当前 {min(saved_idx+1, total)}/{total}"
                 )
                 self._status_label.setStyleSheet("color: #a6e3a1; font-weight: bold;")
-
-    def _on_toggle_filter(self, checked: bool):
-        if checked:
-            self._filter_action.setText("∨ 仅未分类")
-            self._apply_unclassified_filter()
-        else:
-            self._filter_action.setText("∧ 全部图片")
-            self._image_manager.clear_filter()
-
-    def _apply_unclassified_filter(self):
-        excluded = set()
-        for row in self._label_manager.get_labels():
-            excluded.add(row["image_path"])
-        self._image_manager.apply_filter(excluded)
-        total = self._image_manager.total_count()
-        self._status_label.setText(f"仅未分类: {total} 张")
-        self._status_label.setStyleSheet("color: #89b4fa; font-weight: bold;")
 
     def _on_list_changed(self):
         total = self._image_manager.total_count()
@@ -272,24 +280,18 @@ class MainWindow(QMainWindow):
         total = self._image_manager.total_count()
         self._index_label.setText(f"{index + 1} / {total}")
         self._preload_manager.set_current_index(index, self._image_manager.get_image_list())
+        self._save_progress()
 
     def _on_image_loaded(self, path: str, pixmap):
         self._viewer.set_image(pixmap)
         filename = os.path.basename(path)
 
-        # 查分类状态（优先 .sort_progress.json，其次 labels.csv）
-        classified_label = ""
-        classified_file = ""
-        basename = os.path.basename(path)
-        if basename in self._classified_map:
-            classified_label = self._classified_map[basename]
-            info = self._label_manager.get_label_for(path)
-            classified_file = info.get("new_filename", "") if info else ""
-        else:
-            info = self._label_manager.get_label_for(path)
-            if info:
-                classified_label = info.get("label", "")
-                classified_file = info.get("new_filename", "")
+        # 从合并后的进度获取分类信息
+        info = self._classified_map.get(filename, {})
+        classified_label = info.get("label", "")
+        classified_by = info.get("by", "")
+        classified_at = info.get("at", "")[:10] if info.get("at") else ""
+        multi = self._multi_count.get(filename, 0)
 
         self._info_overlay.update_info(
             filename=filename,
@@ -299,26 +301,31 @@ class MainWindow(QMainWindow):
             total=self._image_manager.total_count(),
             directory=self._image_manager.current_dir,
             classified_label=classified_label,
-            classified_file=classified_file,
+            classified_by=classified_by,
+            classified_at=classified_at,
+            multi_count=multi,
         )
         self._info_overlay.show()
 
         blur_msg = ""
         if self._blur_enabled:
-            import cv2
-            img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-            if img is not None:
-                var = cv2.Laplacian(img, cv2.CV_64F).var()
-                if var < self._blur_threshold:
-                    blur_msg = f"  [模糊: {var:.1f}]"
+            try:
+                import cv2
+                img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+                if img is not None:
+                    var = cv2.Laplacian(img, cv2.CV_64F).var()
+                    if var < self._blur_threshold:
+                        blur_msg = f"  [模糊: {var:.1f}]"
+            except ImportError:
+                pass
         self.setWindowTitle(f"{filename}{blur_msg} - 电力巡检图像数据集构建工具")
 
         has_crop = self._viewer_has_crop_overlay()
         if has_crop:
-            self._status_label.setText("拖动裁剪框定位缺陷，按分类键保存裁剪+分类")
+            self._status_label.setText("拖动裁剪框定位缺陷，按分类键保存")
             self._status_label.setStyleSheet("color: #a6e3a1; font-weight: bold;")
         else:
-            self._status_label.setText("按 1/2/3 可选裁剪，直接按分类键(QWER/ASDF/T)标记标签")
+            self._status_label.setText("按 1/2/3 可选裁剪，直接按分类键标记标签")
             self._status_label.setStyleSheet("")
 
     def _on_load_error(self, path: str, error: str):
@@ -334,11 +341,10 @@ class MainWindow(QMainWindow):
         if direction in nav_map:
             nav_map[direction]()
 
-    # ── Slots: Crop Overlay ──────────────────────────────
+    # ── Slots: Crop ───────────────────────────────────────
     def _on_crop_size_changed(self, size_name: str):
         self._crop_size_name = size_name
-        self._status_label.setText(f"裁剪框: {size_name}  |  拖动定位，按分类键(QWER)保存")
-        self._status_label.setStyleSheet("color: #a6e3a1; font-weight: bold;")
+        self._status_label.setText(f"裁剪框: {size_name}  |  拖动定位，按分类键")
 
     def _viewer_has_crop_overlay(self) -> bool:
         from widgets.crop_overlay import CropOverlay
@@ -361,15 +367,14 @@ class MainWindow(QMainWindow):
                 return item.pixmap()
         return None
 
-    # ── Slots: Standalone Crop (Enter key) ───────────────
     def _on_standalone_crop(self, rect):
-        """Enter key — save crop to target dir without classifying."""
+        """Enter key — standalone crop (不分类，直接保存到目标目录)"""
         src = self._image_manager.current_path()
         if not src:
             return
         target_dir = self._settings.target_dir
         if not target_dir:
-            self._status_label.setText("裁剪失败: 未设置分类输出目录")
+            self._status_label.setText("裁剪失败: 未设置目标目录")
             return
         pixmap = self._get_current_pixmap()
         if not pixmap or pixmap.isNull():
@@ -386,70 +391,47 @@ class MainWindow(QMainWindow):
         )
         mgr.save_crop(pixmap, rect, src, self._crop_size_name)
 
-    # ── Slots: Classify (QWER etc.) ────────────────────────
+    # ── Slots: Classify (元数据记录，不操作文件) ──────────
     def _on_classify(self, key: str, label: str):
         logger = get_logger()
+        username = self._settings.get("general.username", "")
+        if not username:
+            self._prompt_username()
+            if not self._settings.get("general.username", ""):
+                self._status_label.setText("请先设置用户名再分类")
+                self._status_label.setStyleSheet("color: #FF6B6B; font-weight: bold;")
+                return
 
         src = self._image_manager.current_path()
         if not src:
             return
 
-        # 1) 检查目标目录
-        target_dir = self._settings.target_dir
-        if not target_dir:
-            self._status_label.setText("目标目录未设置，请在设置中指定分类输出目录")
-            self._status_label.setStyleSheet("color: #FF6B6B; font-weight: bold;")
-            return
-        os.makedirs(target_dir, exist_ok=True)
-
-        mapping = next((m for m in self._settings.class_mappings if m.label == label), None)
-        folder = mapping.folder if mapping else label
-
-        # 2) 复制原图到目标目录，重命名为 label_6位流水号
-        import shutil
-        import glob as glob_mod
-        dst_dir = os.path.join(target_dir, folder)
-        os.makedirs(dst_dir, exist_ok=True)
-        ext = os.path.splitext(src)[1].lower()
-        # 计算下一个流水号（以 label 为文件名前缀）
-        prefix = mapping.label if mapping else label
-        existing = glob_mod.glob(os.path.join(dst_dir, f"{prefix}_*{ext}"))
-        max_seq = 0
-        for f in existing:
-            stem = os.path.splitext(os.path.basename(f))[0]
-            try:
-                num = int(stem.rsplit("_", 1)[-1])
-                max_seq = max(max_seq, num)
-            except ValueError:
-                pass
-        seq = max_seq + 1
-        new_filename = f"{prefix}_{seq:06d}{ext}"
-        dst = os.path.join(dst_dir, new_filename)
-        shutil.copy2(src, dst)
-        logger.info(f"Copied: {src} -> {dst}")
-
-        # 3) 如果有裁剪框，同时保存裁剪图
-        crop_path = ""
+        # 保存裁剪（如果有裁剪框）
         crop_rect = self._get_crop_rect()
         has_crop = crop_rect is not None and not crop_rect.isEmpty()
         if has_crop:
-            pixmap = self._get_current_pixmap()
-            if not pixmap or pixmap.isNull():
-                pixmap = self._image_manager.load_pixmap(src)
-            if pixmap and not pixmap.isNull():
-                crop_path = self._crop_manager.save_crop(
-                    pixmap, crop_rect, src, self._crop_size_name, folder
-                )
+            target_dir = self._settings.target_dir
+            if target_dir:
+                pixmap = self._get_current_pixmap()
+                if not pixmap or pixmap.isNull():
+                    pixmap = self._image_manager.load_pixmap(src)
+                if pixmap and not pixmap.isNull():
+                    folder = ""
+                    mapping = next((m for m in self._settings.class_mappings if m.label == label), None)
+                    if mapping:
+                        folder = mapping.folder
+                    self._crop_manager.save_crop(pixmap, crop_rect, src, self._crop_size_name, folder)
 
-        # 4) 记录标签
-        self._label_manager.append(src, label, new_filename=new_filename)
-        self._classified_map[os.path.basename(src)] = label
+        # 写元数据
+        entry_path = self._entry_manager.write_entry(src, label, username)
+        self._classified_map[os.path.basename(src)] = {"label": label, "by": username, "at": ""}
+        self._multi_count[os.path.basename(src)] = self._multi_count.get(os.path.basename(src), 0) + 1
 
-        # 5) 记录 undo
+        # 记录 undo
         saved_idx = self._image_manager.current_index()
         entry = UndoEntry(
-            src_path=dst,
-            dst_path=crop_path,
+            src_path=src,
+            dst_path=entry_path,     # entry_path is the metadata file
             original_src=src,
             label=label,
             action_type="classify",
@@ -458,10 +440,9 @@ class MainWindow(QMainWindow):
         )
         self._undo_manager.push(entry)
 
-        # 6) 清除裁剪框，自动下一张
+        # 自动下一张
         self._viewer.set_crop_overlay(None)
         self._crop_size_name = ""
-
         auto_next = self._settings.get("general.auto_next", True)
         total = self._image_manager.total_count()
         if auto_next and saved_idx < total - 1:
@@ -470,21 +451,94 @@ class MainWindow(QMainWindow):
         else:
             self._image_manager.go_to(saved_idx)
 
-        crop_msg = f" | 裁剪: {os.path.basename(crop_path)}" if crop_path else ""
         self._status_label.setText(
-            f"已分类 '{label}' -> {os.path.basename(dst)}{crop_msg}  |  Ctrl+Z 撤销"
+            f"已分类 '{label}' | 标注人: {username} | Ctrl+Z 撤销"
         )
         self._status_label.setStyleSheet("")
         self._save_progress()
-        logger.info(f"Classified: {os.path.basename(src)} -> {label}, copy: {dst}" +
-                    (f", crop: {crop_path}" if crop_path else ""))
+        logger.info(f"Classified: {os.path.basename(src)} -> {label} by {username}")
 
     def _on_drag_classify(self, label: str):
         self._on_classify("", label)
 
-    def _on_crop_file_saved(self, saved_path: str):
-        """Signal from CropManager after classify-triggered crop."""
-        pass  # _on_classify already updates status
+    # ── Slots: Export ─────────────────────────────────────
+    def _on_export(self):
+        """批量导出：将 pending 记录复制到目标目录并重命名。"""
+        import shutil
+        import glob as glob_mod
+
+        target_dir = self._settings.target_dir
+        if not target_dir:
+            QMessageBox.warning(self, "导出", "请先在设置中指定分类输出目录。")
+            return
+
+        entries = [e for e in self._entry_manager.read_all_entries()
+                   if e.get("status") == "pending"]
+        if not entries:
+            QMessageBox.information(self, "导出", "没有需要导出的记录。")
+            return
+
+        total = len(entries)
+        progress = QProgressDialog("正在导出...", "取消", 0, total, self)
+        progress.setWindowTitle("导出到目标目录")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+        QApplication.processEvents()
+
+        exported = 0
+        for i, entry in enumerate(entries):
+            if progress.wasCanceled():
+                break
+            progress.setValue(i + 1)
+            progress.setLabelText(f"导出: {os.path.basename(entry['image_path'])}")
+            QApplication.processEvents()
+
+            src = entry["image_path"]
+            if not os.path.isfile(src):
+                continue
+
+            label = entry.get("label", "unknown")
+            folder = ""
+            for m in self._settings.class_mappings:
+                if m.label == label:
+                    folder = m.folder
+                    break
+            if not folder:
+                folder = label
+
+            dst_dir = os.path.join(target_dir, folder)
+            os.makedirs(dst_dir, exist_ok=True)
+            ext = os.path.splitext(src)[1].lower()
+            prefix = label
+
+            existing = glob_mod.glob(os.path.join(dst_dir, f"{prefix}_*{ext}"))
+            max_seq = 0
+            for f in existing:
+                try:
+                    num = int(os.path.splitext(os.path.basename(f))[0].rsplit("_", 1)[-1])
+                    max_seq = max(max_seq, num)
+                except ValueError:
+                    pass
+            seq = max_seq + 1
+            new_fn = f"{prefix}_{seq:06d}{ext}"
+            dst = os.path.join(dst_dir, new_fn)
+
+            try:
+                shutil.copy2(src, dst)
+                self._entry_manager.set_synced(
+                    entry.get("_entry_file", f"{entry['classified_by']}_{entry['modified_at'].replace(':', '')}.json"),
+                    new_fn
+                )
+                exported += 1
+            except OSError as e:
+                get_logger().error(f"Export failed: {src} -> {dst}: {e}")
+
+        progress.close()
+        # 重建汇总 CSV
+        self._entry_manager.build_csv(self._settings.get("paths.label_csv_dir", "labels") +
+                                       "/" + self._settings.get("paths.label_csv_name", "labels.csv"))
+        self._status_label.setText(f"导出完成: {exported}/{total} 条")
+        self._status_label.setStyleSheet("color: #a6e3a1; font-weight: bold;")
 
     # ── Slots: Undo ───────────────────────────────────────
     def _on_undo(self):
@@ -494,37 +548,44 @@ class MainWindow(QMainWindow):
             self._status_label.setText("没有可撤销的操作")
             return
 
-        # 删除复制到目标目录的文件
-        if entry.src_path and os.path.isfile(entry.src_path):
-            try:
-                os.remove(entry.src_path)
-                logger.info(f"Deleted copy: {entry.src_path}")
-            except OSError as e:
-                logger.error(f"Failed to delete copy: {entry.src_path}: {e}")
-
-        # 删除裁剪文件（如果有）
+        # 删除元数据增量文件
         if entry.dst_path and os.path.isfile(entry.dst_path):
-            try:
-                os.remove(entry.dst_path)
-                logger.info(f"Deleted crop: {entry.dst_path}")
-            except OSError as e:
-                logger.error(f"Failed to delete crop: {entry.dst_path}: {e}")
+            fn = os.path.basename(entry.dst_path)
+            self._entry_manager.delete_entry_file(fn)
 
-        # 删除 CSV 记录（用原始路径查找）
-        csv_key = entry.original_src or entry.src_path
-        self._label_manager.remove_entry(csv_key)
-        self._classified_map.pop(os.path.basename(csv_key), None)
+        # 更新 classified_map
+        bn = os.path.basename(entry.original_src or entry.src_path)
+        self._classified_map.pop(bn, None)
+        cnt = self._multi_count.get(bn, 1)
+        if cnt <= 1:
+            self._multi_count.pop(bn, None)
+        else:
+            self._multi_count[bn] = cnt - 1
 
-        # 回到当时的图片位置
         target_idx = min(entry.original_index, self._image_manager.total_count() - 1)
         if target_idx >= 0:
             self._image_manager.go_to(target_idx)
 
-        self._status_label.setText(f"已撤销: {os.path.basename(csv_key)} 已从目标目录删除")
+        self._status_label.setText(f"已撤销: {os.path.basename(entry.src_path)}")
         self._status_label.setStyleSheet("")
         self._save_progress()
-        logger.info(f"Undo: removed {entry.src_path}" +
-                    (f" and {entry.dst_path}" if entry.dst_path else ""))
+        logger.info(f"Undo: {entry.dst_path}")
+
+    # ── Slots: Filter ─────────────────────────────────────
+    def _on_toggle_filter(self, checked: bool):
+        if checked:
+            self._filter_action.setText("∨ 仅未分类")
+            self._apply_unclassified_filter()
+        else:
+            self._filter_action.setText("∧ 全部图片")
+            self._image_manager.clear_filter()
+
+    def _apply_unclassified_filter(self):
+        excluded = self._entry_manager.get_classified_paths()
+        self._image_manager.apply_filter(excluded)
+        total = self._image_manager.total_count()
+        self._status_label.setText(f"仅未分类: {total} 张")
+        self._status_label.setStyleSheet("color: #89b4fa; font-weight: bold;")
 
     # ── Slots: Other ──────────────────────────────────────
     def _on_zoom_changed(self, percent: float):
@@ -538,12 +599,7 @@ class MainWindow(QMainWindow):
         flist = self._image_manager.get_image_list()
         if not flist or not self._image_manager.current_dir:
             return
-        # 从 label_manager 获取当前已分类图片
-        classified = {}
-        for row in self._label_manager.get_labels():
-            fn = os.path.basename(row["image_path"])
-            classified[fn] = row["label"]
-        self._progress.save(idx, flist, classified)
+        self._progress.save_my(idx, flist)
 
     def _on_open_settings(self):
         from ui.settings_dialog import SettingsDialog
@@ -551,26 +607,22 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             self._settings.reload()
             self._crop_manager._output_dir = self._settings.target_dir
+            self._progress.set_username(self._settings.get("general.username", ""))
             self._viewer._load_key_maps()
             self._rebuild_drag_zones()
-            self._check_target_dir_on_startup()
 
     def _rebuild_drag_zones(self):
         from widgets.drag_zone import DragZone
-        # 删除旧拖拽区
         for z in self._drag_zones:
             z.setParent(None)
             z.deleteLater()
         self._drag_zones.clear()
-        # 找到 self._zone_layout（在 _build_ui 中创建）
         if not hasattr(self, '_zone_layout') or self._zone_layout is None:
             return
-        # 移除旧的 DragZone（保留 hint_label 和 stretch）
         while self._zone_layout.count() > 2:
             item = self._zone_layout.takeAt(self._zone_layout.count() - 2)
             if item and item.widget():
                 item.widget().deleteLater()
-        # 重新添加
         for mapping in self._settings.class_mappings:
             zone = DragZone(mapping)
             zone.image_dropped.connect(self._on_drag_classify)

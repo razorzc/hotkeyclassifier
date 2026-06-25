@@ -15,6 +15,7 @@ from core.entry_manager import EntryManager
 from core.undo_manager import UndoManager, UndoEntry
 from core.crop_manager import CropManager
 from core.preload_manager import PreloadManager
+from core.batch_manager import BatchManager
 from core.progress_manager import ProgressManager
 from utils.logger import get_logger
 
@@ -26,6 +27,7 @@ class MainWindow(QMainWindow):
         self._image_manager = image_manager
 
         self._entry_manager = EntryManager()
+        self._batch_manager = BatchManager()
         self._undo_manager = UndoManager(settings.max_undo_depth)
         self._crop_manager = CropManager(settings.target_dir)
         self._preload_manager = PreloadManager(settings)
@@ -57,6 +59,7 @@ class MainWindow(QMainWindow):
         user = self._settings.get("general.username", "")
         if user:
             self._progress.set_username(user)
+            self._batch_manager.ensure_default(user)
             return
         # 延迟弹窗
         from PySide6.QtCore import QTimer
@@ -71,6 +74,8 @@ class MainWindow(QMainWindow):
             self._settings.set("general.username", name.strip())
             self._settings.save()
             self._progress.set_username(name.strip())
+            self._batch_manager.ensure_default(name.strip())
+            self._rebuild_batch_menu()
             self._status_label.setText(f"欢迎, {name.strip()}!")
         elif not self._settings.get("general.username", ""):
             self._status_label.setText("未设置用户名，请到设置→通用中配置")
@@ -221,6 +226,21 @@ class MainWindow(QMainWindow):
         undo_list_action.setToolTip("查看并撤销本批次的分类")
         undo_list_action.triggered.connect(self._on_undo_list)
         toolbar.addAction(undo_list_action)
+        toolbar.addSeparator()
+
+        # 批次管理
+        from PySide6.QtWidgets import QToolButton, QMenu
+        self._batch_menu_btn = QToolButton()
+        self._batch_menu_btn.setText("批次 ▾")
+        self._batch_menu_btn.setToolTip("管理分类批次")
+        self._batch_menu_btn.setStyleSheet("""
+            QToolButton{background-color:#45475a;color:#cdd6f4;border:1px solid #585b70;
+                        border-radius:4px;padding:4px 12px;font-size:12px;font-weight:bold;}
+            QToolButton:hover{background-color:#585b70;}
+        """)
+        self._batch_menu_btn.setPopupMode(QToolButton.InstantPopup)
+        self._rebuild_batch_menu()
+        toolbar.addWidget(self._batch_menu_btn)
         toolbar.addSeparator()
 
         settings_btn = QAction("设置", self)
@@ -439,7 +459,9 @@ class MainWindow(QMainWindow):
                     self._crop_manager.save_crop(pixmap, crop_rect, src, self._crop_size_name, folder)
 
         # 写元数据
-        entry_path = self._entry_manager.write_entry(src, label, username)
+        batch_id = self._batch_manager.current_id()
+        self._batch_manager.ensure_default(username)
+        entry_path = self._entry_manager.write_entry(src, label, username, batch_id=batch_id)
         self._classified_map[os.path.basename(src)] = {"label": label, "by": username, "at": ""}
         self._multi_count[os.path.basename(src)] = self._multi_count.get(os.path.basename(src), 0) + 1
 
@@ -480,7 +502,7 @@ class MainWindow(QMainWindow):
 
     # ── Slots: Export ─────────────────────────────────────
     def _on_export(self):
-        """批量导出：将 pending 记录复制到目标目录并重命名。"""
+        """批量导出：选择批次后复制到目标目录。"""
         import shutil
         import glob as glob_mod
 
@@ -489,10 +511,21 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "导出", "请先在设置中指定分类输出目录。")
             return
 
-        entries = [e for e in self._entry_manager.read_all_entries()
-                   if e.get("status") == "pending"]
+        # 批次选择对话框
+        from widgets.batch_dialog import BatchExportDialog
+        dlg = BatchExportDialog(self._batch_manager, self._entry_manager, self)
+        if dlg.exec() != dlg.Accepted:
+            return
+        selected = dlg.selected_batches()
+        if not selected:
+            QMessageBox.information(self, "导出", "没有选择任何批次。")
+            return
+
+        all_entries = self._entry_manager.read_all_entries()
+        entries = [e for e in all_entries
+                   if e.get("status") == "pending" and e.get("batch_id", "") in selected]
         if not entries:
-            QMessageBox.information(self, "导出", "没有需要导出的记录。")
+            QMessageBox.information(self, "导出", "所选批次没有待导出的记录。")
             return
 
         total = len(entries)
@@ -551,6 +584,14 @@ class MainWindow(QMainWindow):
                 get_logger().error(f"Export failed: {src} -> {dst}: {e}")
 
         progress.close()
+        # 标记批次已导出
+        for bid in selected:
+            pending_left = any(
+                e.get("status") == "pending" and e.get("batch_id") == bid
+                for e in self._entry_manager.read_all_entries()
+            )
+            if not pending_left:
+                self._batch_manager.mark_exported(bid)
         # 重建汇总 CSV
         self._entry_manager.build_csv(self._settings.get("paths.label_csv_dir", "labels") +
                                        "/" + self._settings.get("paths.label_csv_name", "labels.csv"))
@@ -658,6 +699,53 @@ class MainWindow(QMainWindow):
             zone.image_dropped.connect(self._on_drag_classify)
             self._drag_zones.append(zone)
             self._zone_layout.insertWidget(self._zone_layout.count() - 1, zone)
+
+    # ── Batch Menu ─────────────────────────────────────────
+    def _rebuild_batch_menu(self):
+        if not hasattr(self, '_batch_menu_btn') or self._batch_menu_btn is None:
+            return
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self._batch_menu_btn)
+        menu.setStyleSheet("""
+            QMenu{background:#1e1e2e;color:#cdd6f4;border:1px solid #45475a;border-radius:6px;}
+            QMenu::item{padding:6px 20px;border-radius:4px;}
+            QMenu::item:selected{background:#45475a;}
+        """)
+        current = self._batch_manager.current_id()
+        for b in self._batch_manager.list_batches():
+            bid = b["id"]
+            name = b["name"]
+            marker = " ✓" if bid == current else ""
+            action = menu.addAction(f"{name}{marker}")
+            action.triggered.connect(lambda checked, b=bid: self._on_switch_batch(b))
+        menu.addSeparator()
+        new_action = menu.addAction("+ 新建批次...")
+        new_action.triggered.connect(self._on_new_batch)
+        menu.addSeparator()
+        mgr_action = menu.addAction("管理批次...")
+        mgr_action.triggered.connect(self._on_manage_batches)
+        self._batch_menu_btn.setMenu(menu)
+        self._batch_menu_btn.setText(f"批次: {current} ▾")
+
+    def _on_switch_batch(self, batch_id: str):
+        self._batch_manager.set_current(batch_id)
+        self._rebuild_batch_menu()
+        self._status_label.setText(f"已切换到批次: {batch_id}")
+
+    def _on_new_batch(self):
+        name, ok = QInputDialog.getText(self, "新建批次", "批次名称:")
+        if ok and name.strip():
+            username = self._settings.get("general.username", "")
+            self._batch_manager.add_batch(name.strip(), username)
+            self._rebuild_batch_menu()
+            self._status_label.setText(f"已创建并切换到批次: {name.strip()}")
+
+    def _on_manage_batches(self):
+        from widgets.batch_dialog import BatchManageDialog
+        username = self._settings.get("general.username", "")
+        dlg = BatchManageDialog(self._batch_manager, self._entry_manager, username, self)
+        dlg.exec()
+        self._rebuild_batch_menu()
 
     # ── Help / About ───────────────────────────────────────
     def _on_check_update(self):

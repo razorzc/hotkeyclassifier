@@ -32,6 +32,7 @@ class EntryManager:
         image_path: str,
         label: str,
         classified_by: str,
+        batch_id: str = "",
         status: str = "pending",
     ) -> str:
         """写入一条元数据增量文件，返回文件路径。"""
@@ -40,6 +41,7 @@ class EntryManager:
             "image_path": image_path,
             "label": label,
             "classified_by": classified_by,
+            "batch_id": batch_id,
             "modified_at": _tz_now(),
             "new_filename": "",
             "status": status,
@@ -68,6 +70,7 @@ class EntryManager:
                 entry["_entry_file"] = fn
                 entry.setdefault("modified_at", "")
                 entry.setdefault("classified_by", "")
+                entry.setdefault("batch_id", "")
                 entry.setdefault("new_filename", "")
                 entry.setdefault("status", "pending")
                 entries.append(entry)

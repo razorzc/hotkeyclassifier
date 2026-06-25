@@ -599,7 +599,20 @@ class MainWindow(QMainWindow):
         flist = self._image_manager.get_image_list()
         if not flist or not self._image_manager.current_dir:
             return
-        self._progress.save_my(idx, flist)
+        # 收集当前目录下所有图片的分类信息（来自 entry_manager 元数据）
+        dir_prefix = self._image_manager.current_dir.replace("\\", "/") + "/"
+        classified = {}
+        for entry in self._entry_manager.read_all_entries():
+            path = entry["image_path"].replace("\\", "/")
+            if path.startswith(dir_prefix):
+                bn = os.path.basename(path)
+                if bn not in classified or entry["modified_at"] > classified[bn].get("at", ""):
+                    classified[bn] = {
+                        "label": entry.get("label", ""),
+                        "by": entry.get("classified_by", ""),
+                        "at": entry.get("modified_at", ""),
+                    }
+        self._progress.save_my(idx, flist, classified if classified else None)
 
     def _on_open_settings(self):
         from ui.settings_dialog import SettingsDialog

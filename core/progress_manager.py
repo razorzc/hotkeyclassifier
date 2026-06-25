@@ -48,11 +48,13 @@ class ProgressManager:
         self._data = {"current_index": 0}
         return self._data
 
-    def save_my(self, current_index: int, file_list: list[str]):
+    def save_my(self, current_index: int, file_list: list[str], classified: dict = None):
         if not self._dir or not self._username:
             return
         self._data["current_index"] = current_index
         self._data["total_images"] = len(file_list)
+        if classified is not None:
+            self._data["classified"] = classified
         path = self._progress_path(self._username)
         try:
             with open(path, "w", encoding="utf-8") as f:

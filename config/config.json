@@ -73,25 +73,25 @@
     {
       "key": "A",
       "label": "Tower_Deformation",
-      "folder": "塔杆/变形",
+      "folder": "杆塔/变形",
       "color": "#C084FC"
     },
     {
       "key": "S",
       "label": "Tower_Corrosion",
-      "folder": "塔杆/锈蚀",
+      "folder": "杆塔/锈蚀",
       "color": "#F472B6"
     },
     {
       "key": "D",
       "label": "Tower_Foreign_object",
-      "folder": "塔杆/异物",
+      "folder": "杆塔/异物",
       "color": "#60A5FA"
     },
     {
       "key": "F",
       "label": "Tower_Normal",
-      "folder": "塔杆/正常",
+      "folder": "杆塔/正常",
       "color": "#34D399"
     },
     {
@@ -119,7 +119,7 @@
     "toggle_info": "I"
   },
   "paths": {
-    "target_dir": "D:/code/project/缺陷分类/batch",
+    "target_dir": "C:\\Users\\mxc_z\\AppData\\Local\\Temp\\t_u_dqeaxv",
     "crop_output_dir": "crops",
     "label_csv_dir": "labels",
     "label_csv_name": "labels.csv",

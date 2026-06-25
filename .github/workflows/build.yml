@@ -3,6 +3,7 @@ name: Build & Release
 on:
   push:
     branches: [master]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -33,7 +34,7 @@ jobs:
           name: PowerLineCV
           path: dist/PowerLineCV.exe
 
-      - name: Create Release
+      - name: Create Release (nightly)
         if: github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
@@ -42,7 +43,22 @@ jobs:
           prerelease: true
           files: dist/PowerLineCV.exe
           body: |
-            自动构建版本，基于最新 master 分支。
+            自动构建，基于最新 master 分支。
+
+            **下载** `PowerLineCV.exe` 双击运行即可。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Release (versioned)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "${{ github.ref_name }}"
+          tag_name: "${{ github.ref_name }}"
+          prerelease: false
+          files: dist/PowerLineCV.exe
+          body: |
+            正式版本: ${{ github.ref_name }}
 
             **下载** `PowerLineCV.exe` 双击运行即可。
         env:

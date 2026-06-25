@@ -113,6 +113,10 @@ class MainWindow(QMainWindow):
         settings_action = QAction("设置(&S)...", self)
         settings_action.triggered.connect(self._on_open_settings)
         tools_menu.addAction(settings_action)
+        tools_menu.addSeparator()
+        undo_list_menu = QAction("撤销列表(&L)...", self)
+        undo_list_menu.triggered.connect(self._on_undo_list)
+        tools_menu.addAction(undo_list_menu)
 
         help_menu = menu.addMenu("帮助(&H)")
         update_action = QAction("检查更新(&U)...", self)
@@ -210,9 +214,13 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
 
         undo_action = QAction("↩ 撤销", self)
-        undo_action.setToolTip("Ctrl+Z")
+        undo_action.setToolTip("Ctrl+Z — 撤销最近一次分类")
         undo_action.triggered.connect(self._on_undo)
         toolbar.addAction(undo_action)
+        undo_list_action = QAction("≡ 撤销列表", self)
+        undo_list_action.setToolTip("查看并撤销本批次的分类")
+        undo_list_action.triggered.connect(self._on_undo_list)
+        toolbar.addAction(undo_list_action)
         toolbar.addSeparator()
 
         settings_btn = QAction("设置", self)
@@ -439,11 +447,12 @@ class MainWindow(QMainWindow):
         saved_idx = self._image_manager.current_index()
         entry = UndoEntry(
             src_path=src,
-            dst_path=entry_path,     # entry_path is the metadata file
+            dst_path=entry_path,
             original_src=src,
             label=label,
             action_type="classify",
             original_index=saved_idx,
+            classified_by=username,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
         self._undo_manager.push(entry)
@@ -654,6 +663,92 @@ class MainWindow(QMainWindow):
     def _on_check_update(self):
         from core.updater import check_update
         check_update(self, silent=False)
+
+    def _on_undo_list(self):
+        username = self._settings.get("general.username", "")
+        entries = self._undo_manager.list_by_user(username)
+        if not entries:
+            QMessageBox.information(self, "撤销列表", "没有可撤销的记录。")
+            return
+
+        from PySide6.QtWidgets import QDialog, QListWidget, QListWidgetItem, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle("撤销列表 — 选择要撤销的分类")
+        dlg.setMinimumSize(600, 400)
+        dlg.resize(650, 450)
+        dlg.setStyleSheet("QDialog{background-color:#1e1e2e;} QLabel{color:#cdd6f4;background:transparent;}")
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(8)
+
+        lbl = QLabel(f"标注人: {username}  共 {len(entries)} 条可撤销记录")
+        lbl.setStyleSheet("font-size:14px;font-weight:bold;color:#89b4fa;")
+        layout.addWidget(lbl)
+
+        lst = QListWidget()
+        lst.setStyleSheet("""
+            QListWidget{background-color:#181825;color:#cdd6f4;border:1px solid #45475a;
+                        border-radius:6px;font-size:13px;}
+            QListWidget::item{padding:8px;border-radius:4px;}
+            QListWidget::item:hover{background-color:#313244;}
+            QListWidget::item:selected{background-color:#45475a;}
+        """)
+        # Build items
+        from datetime import datetime
+        for idx, e in entries:
+            when = ""
+            try:
+                dt = datetime.fromisoformat(e.timestamp.replace("Z", "+00:00"))
+                when = dt.strftime("%H:%M:%S")
+            except Exception:
+                pass
+            text = f"[{when}] {os.path.basename(e.original_src)}  →  {e.label}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, idx)
+            lst.addItem(item)
+        layout.addWidget(lst)
+
+        btns = QDialogButtonBox()
+        undo_btn = btns.addButton("撤销选中", QDialogButtonBox.ActionRole)
+        undo_btn.setStyleSheet("background-color:#45475a;color:#cdd6f4;padding:8px 22px;border-radius:6px;font-weight:bold;")
+        undo_btn.clicked.connect(lambda: self._do_batch_undo(lst, dlg, username))
+        close_btn = btns.addButton("关闭", QDialogButtonBox.RejectRole)
+        layout.addWidget(btns)
+
+        dlg.exec()
+
+    def _do_batch_undo(self, lst, dlg, username):
+        selected = []
+        for item in lst.selectedItems():
+            selected.append(item.data(Qt.UserRole))
+        if not selected:
+            QMessageBox.information(dlg, "提示", "请先选中要撤销的记录。")
+            return
+
+        # 从大到小排序，从栈中移除
+        for idx in sorted(selected, reverse=True):
+            entry = self._undo_manager.remove_at(idx)
+            if entry is None:
+                continue
+            # 删除元数据文件
+            if entry.dst_path and os.path.isfile(entry.dst_path):
+                try:
+                    os.remove(entry.dst_path)
+                except OSError:
+                    pass
+            # 更新 classified_map
+            bn = os.path.basename(entry.original_src)
+            self._classified_map.pop(bn, None)
+            cnt = self._multi_count.get(bn, 1)
+            if cnt <= 1:
+                self._multi_count.pop(bn, None)
+            else:
+                self._multi_count[bn] = cnt - 1
+
+        count = len(selected)
+        self._status_label.setText(f"已撤销 {count} 条分类记录")
+        self._status_label.setStyleSheet("color: #a6e3a1; font-weight: bold;")
+        self._save_progress()
+        dlg.accept()
 
     def _on_about(self):
         from core.updater import get_version

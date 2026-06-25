@@ -22,6 +22,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set version
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF -match 'refs/tags/v(.+)$') { $matches[1] } else { 'nightly' }
+          (Get-Content core/updater.py) -replace 'APP_VERSION = ".*"', "APP_VERSION = `"$version`"" | Set-Content core/updater.py
+          Write-Host "Version set to: $version"
+
       - name: Install dependencies
         run: pip install -r requirements.txt pyinstaller
 
@@ -61,5 +68,6 @@ jobs:
             正式版本: ${{ github.ref_name }}
 
             **下载** `PowerLineCV.exe` 双击运行即可。
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

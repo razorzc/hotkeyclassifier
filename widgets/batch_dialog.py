@@ -116,7 +116,7 @@ class BatchManageDialog(QDialog):
 
 
 class BatchExportDialog(QDialog):
-    """导出选择：勾选批次后导出。"""
+    """导出选择：勾选批次 + 文件选项后导出。"""
 
     def __init__(self, batch_mgr: BatchManager, entry_mgr: EntryManager, parent=None):
         super().__init__(parent)
@@ -124,15 +124,16 @@ class BatchExportDialog(QDialog):
         self._entry_mgr = entry_mgr
         self._checks: list[tuple[str, QCheckBox, int]] = []
 
-        self.setWindowTitle("选择批次导出")
-        self.setMinimumSize(400, 280)
-        self.resize(450, 320)
+        self.setWindowTitle("导出选项")
+        self.setMinimumSize(420, 380)
+        self.resize(460, 420)
         self.setStyleSheet("QDialog{background-color:#1e1e2e;}")
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(8)
+        layout.setSpacing(10)
         layout.setContentsMargins(16, 16, 16, 16)
 
+        # ── 批次选择 ─────────────────────────────────
         lbl = QLabel("选择要导出的批次:")
         lbl.setStyleSheet("font-size:14px;font-weight:bold;color:#89b4fa;")
         layout.addWidget(lbl)
@@ -158,6 +159,45 @@ class BatchExportDialog(QDialog):
             layout.addWidget(row)
             self._checks.append((bid, cb, pending))
 
+        # ── 分隔 ─────────────────────────────────────
+        sep = QLabel()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background-color:#45475a;")
+        layout.addWidget(sep)
+
+        # ── 文件选项 ─────────────────────────────────
+        opts_lbl = QLabel("导出选项")
+        opts_lbl.setStyleSheet("font-size:14px;font-weight:bold;color:#89b4fa;")
+        layout.addWidget(opts_lbl)
+
+        self._rename_cb = QCheckBox("重命名复制后的图片")
+        self._rename_cb.setChecked(True)
+        self._rename_cb.setStyleSheet("color:#cdd6f4;font-size:13px;")
+        self._rename_cb.setToolTip("勾选则按 {label}_{流水号}.jpg 重命名，否则保留原名")
+        layout.addWidget(self._rename_cb)
+
+        from PySide6.QtWidgets import QSpinBox
+        seq_row = QWidget()
+        seq_l = QHBoxLayout(seq_row)
+        seq_l.setContentsMargins(0, 2, 0, 2)
+        seq_l.setSpacing(8)
+        seq_label = QLabel("起始流水号:")
+        seq_label.setStyleSheet("color:#cdd6f4;font-size:13px;")
+        seq_l.addWidget(seq_label)
+        self._start_seq = QSpinBox()
+        self._start_seq.setRange(1, 999999)
+        self._start_seq.setValue(1)
+        self._start_seq.setStyleSheet("background:#313244;color:#fff;border:1px solid #45475a;border-radius:4px;padding:4px 8px;")
+        self._start_seq.setToolTip("重命名时序号从此值开始递增")
+        seq_l.addWidget(self._start_seq)
+        seq_l.addStretch()
+        layout.addWidget(seq_row)
+
+        self._png_cb = QCheckBox("导出为 PNG 格式")
+        self._png_cb.setStyleSheet("color:#cdd6f4;font-size:13px;")
+        self._png_cb.setToolTip("勾选则统一转为 .png，否则保留原格式")
+        layout.addWidget(self._png_cb)
+
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
@@ -165,3 +205,12 @@ class BatchExportDialog(QDialog):
 
     def selected_batches(self) -> list[str]:
         return [bid for bid, cb, _ in self._checks if cb.isChecked()]
+
+    def rename_enabled(self) -> bool:
+        return self._rename_cb.isChecked()
+
+    def start_seq(self) -> int:
+        return self._start_seq.value()
+
+    def convert_to_png(self) -> bool:
+        return self._png_cb.isChecked()

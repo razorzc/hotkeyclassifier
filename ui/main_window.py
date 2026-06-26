@@ -504,7 +504,6 @@ class MainWindow(QMainWindow):
     def _on_export(self):
         """批量导出：选择批次后复制到目标目录。"""
         import shutil
-        import glob as glob_mod
 
         target_dir = self._settings.target_dir
         if not target_dir:
@@ -520,6 +519,9 @@ class MainWindow(QMainWindow):
         if not selected:
             QMessageBox.information(self, "导出", "没有选择任何批次。")
             return
+        rename = dlg.rename_enabled()
+        start_seq = dlg.start_seq()
+        to_png = dlg.convert_to_png()
 
         all_entries = self._entry_manager.read_all_entries()
         entries = [e for e in all_entries
@@ -535,6 +537,7 @@ class MainWindow(QMainWindow):
         progress.show()
         QApplication.processEvents()
 
+        seq = start_seq
         exported = 0
         for i, entry in enumerate(entries):
             if progress.wasCanceled():
@@ -558,23 +561,34 @@ class MainWindow(QMainWindow):
 
             dst_dir = os.path.join(target_dir, folder)
             os.makedirs(dst_dir, exist_ok=True)
-            ext = os.path.splitext(src)[1].lower()
-            prefix = label
 
-            existing = glob_mod.glob(os.path.join(dst_dir, f"{prefix}_*{ext}"))
-            max_seq = 0
-            for f in existing:
-                try:
-                    num = int(os.path.splitext(os.path.basename(f))[0].rsplit("_", 1)[-1])
-                    max_seq = max(max_seq, num)
-                except ValueError:
-                    pass
-            seq = max_seq + 1
-            new_fn = f"{prefix}_{seq:06d}{ext}"
+            if rename:
+                ext = ".png" if to_png else os.path.splitext(src)[1].lower()
+                prefix = label
+                new_fn = f"{prefix}_{seq:06d}{ext}"
+                seq += 1
+            else:
+                base = os.path.basename(src)
+                if to_png:
+                    base = os.path.splitext(base)[0] + ".png"
+                new_fn = base
+                # 冲突处理
+                if os.path.exists(os.path.join(dst_dir, new_fn)):
+                    stem, ext = os.path.splitext(base)
+                    counter = 1
+                    while os.path.exists(os.path.join(dst_dir, f"{stem}_{counter:03d}{ext}")):
+                        counter += 1
+                    new_fn = f"{stem}_{counter:03d}{ext}"
+
             dst = os.path.join(dst_dir, new_fn)
 
             try:
-                shutil.copy2(src, dst)
+                if to_png and not src.lower().endswith(".png"):
+                    from PIL import Image
+                    img = Image.open(src)
+                    img.save(dst, "PNG")
+                else:
+                    shutil.copy2(src, dst)
                 self._entry_manager.set_synced(
                     entry.get("id", ""),
                     entry.get("classified_by", ""),

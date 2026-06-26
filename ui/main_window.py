@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QSplitter, QLabel, QFileDialog, QMenuBar,
     QInputDialog, QProgressDialog, QApplication,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 
 from core.settings import AppSettings
@@ -44,6 +44,9 @@ class MainWindow(QMainWindow):
         self._blur_threshold = settings.blur_threshold
         self._classified_map: dict[str, dict] = {}       # basename -> {label, by, at}
         self._multi_count: dict[str, int] = {}           # basename -> 标注人数
+        self._entries_cache: list[dict] = []             # read_all_entries 缓存
+        self._entries_dirty: bool = True                 # 缓存是否过期
+        self._progress_timer: QTimer = None              # 延迟保存进度
 
         self.setWindowTitle("电力巡检图像数据集构建工具")
         self.setMinimumSize(800, 500)
@@ -62,7 +65,6 @@ class MainWindow(QMainWindow):
             self._batch_manager.ensure_default(user)
             return
         # 延迟弹窗
-        from PySide6.QtCore import QTimer
         QTimer.singleShot(200, self._prompt_username)
 
     def _prompt_username(self):
@@ -288,7 +290,7 @@ class MainWindow(QMainWindow):
             # 合并所有用户进度 + entry_manager 元数据
             self._classified_map = self._progress.get_merged_classified(path)
             self._multi_count.clear()
-            all_entries = self._entry_manager.read_all_entries()
+            all_entries = self._get_entries()
             for e in all_entries:
                 bn = os.path.basename(e["image_path"])
                 self._multi_count[bn] = self._multi_count.get(bn, 0) + 1
@@ -316,7 +318,12 @@ class MainWindow(QMainWindow):
         total = self._image_manager.total_count()
         self._index_label.setText(f"{index + 1} / {total}")
         self._preload_manager.set_current_index(index, self._image_manager.get_image_list())
-        self._save_progress()
+        # 延迟 2 秒保存进度（避免按住方向键时频繁写盘）
+        if self._progress_timer is None:
+            self._progress_timer = QTimer(self)
+            self._progress_timer.setSingleShot(True)
+            self._progress_timer.timeout.connect(self._save_progress)
+        self._progress_timer.start(2000)
 
     def _on_image_loaded(self, path: str, pixmap):
         self._viewer.set_image(pixmap)
@@ -462,6 +469,7 @@ class MainWindow(QMainWindow):
         batch_id = self._batch_manager.current_id()
         self._batch_manager.ensure_default(username)
         entry_id = self._entry_manager.write_entry(src, label, username, batch_id=batch_id)
+        self._invalidate_entries()
         self._classified_map[os.path.basename(src)] = {"label": label, "by": username, "at": ""}
         self._multi_count[os.path.basename(src)] = self._multi_count.get(os.path.basename(src), 0) + 1
 
@@ -485,7 +493,6 @@ class MainWindow(QMainWindow):
         auto_next = self._settings.get("general.auto_next", True)
         total = self._image_manager.total_count()
         if auto_next and saved_idx < total - 1:
-            from PySide6.QtCore import QTimer
             QTimer.singleShot(0, lambda: self._image_manager.go_to(saved_idx + 1))
         else:
             self._image_manager.go_to(saved_idx)
@@ -523,7 +530,7 @@ class MainWindow(QMainWindow):
         start_seq = dlg.start_seq()
         to_png = dlg.convert_to_png()
 
-        all_entries = self._entry_manager.read_all_entries()
+        all_entries = self._get_entries()
         entries = [e for e in all_entries
                    if e.get("status") == "pending" and e.get("batch_id", "") in selected]
         if not entries:
@@ -603,7 +610,7 @@ class MainWindow(QMainWindow):
         for bid in selected:
             pending_left = any(
                 e.get("status") == "pending" and e.get("batch_id") == bid
-                for e in self._entry_manager.read_all_entries()
+                for e in self._get_entries()
             )
             if not pending_left:
                 self._batch_manager.mark_exported(bid)
@@ -624,6 +631,7 @@ class MainWindow(QMainWindow):
         # 软删除元数据记录
         if entry.dst_path and entry.classified_by:
             self._entry_manager.soft_delete(entry.dst_path, entry.classified_by)
+            self._invalidate_entries()
 
         # 更新 classified_map
         bn = os.path.basename(entry.original_src or entry.src_path)
@@ -666,15 +674,24 @@ class MainWindow(QMainWindow):
     def _on_preload_ready(self, index: int, pixmap):
         self._image_manager.cache_pixmap(index, pixmap)
 
+    def _get_entries(self) -> list[dict]:
+        """获取缓存的 entry 列表，避免频繁读盘。"""
+        if self._entries_dirty:
+            self._entries_cache = self._entry_manager.read_all_entries()
+            self._entries_dirty = False
+        return self._entries_cache
+
+    def _invalidate_entries(self):
+        self._entries_dirty = True
+
     def _save_progress(self):
         idx = self._image_manager.current_index()
         flist = self._image_manager.get_image_list()
         if not flist or not self._image_manager.current_dir:
             return
-        # 收集当前目录下所有图片的分类信息（来自 entry_manager 元数据）
         dir_prefix = self._image_manager.current_dir.replace("\\", "/") + "/"
         classified = {}
-        for entry in self._entry_manager.read_all_entries():
+        for entry in self._get_entries():
             path = entry["image_path"].replace("\\", "/")
             if path.startswith(dir_prefix):
                 bn = os.path.basename(path)

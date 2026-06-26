@@ -199,7 +199,7 @@ class MainWindow(QMainWindow):
             action = QAction(text, self)
             action.setToolTip(tip)
             action.triggered.connect(
-                lambda d=direction: (
+                lambda checked=False, d=direction: (
                     self._image_manager.go_prev() if d == "prev"
                     else self._image_manager.go_next()
                 )

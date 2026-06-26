@@ -119,7 +119,7 @@
     "toggle_info": "I"
   },
   "paths": {
-    "target_dir": "C:\\Users\\mxc_z\\AppData\\Local\\Temp\\t_u_dqeaxv",
+    "target_dir": "D:/code/project/缺陷分类/batch",
     "crop_output_dir": "crops",
     "label_csv_dir": "labels",
     "label_csv_name": "labels.csv",

@@ -1,27 +1,60 @@
 import os
-from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, Qt, QThreadPool, QRunnable
 from PySide6.QtGui import QPixmap
 
 from core.settings import AppSettings
+
+
+class _LoadSignaller(QObject):
+    ready = Signal(int, QPixmap)
+    error = Signal(int, str)
+
+
+class _LoadTask(QRunnable):
+    def __init__(self, path: str, index: int, max_dim: int):
+        super().__init__()
+        self._path = path
+        self._index = index
+        self._max_dim = max_dim
+        self.signaller = _LoadSignaller()
+
+    def run(self):
+        if not os.path.exists(self._path):
+            self.signaller.error.emit(self._index, "File not found")
+            return
+        pixmap = QPixmap(self._path)
+        if pixmap.isNull():
+            self.signaller.error.emit(self._index, "Failed to load")
+            return
+        if pixmap.width() > self._max_dim or pixmap.height() > self._max_dim:
+            pixmap = pixmap.scaled(
+                self._max_dim, self._max_dim,
+                Qt.KeepAspectRatio, Qt.SmoothTransformation,
+            )
+        self.signaller.ready.emit(self._index, pixmap)
 
 
 class ImageManager(QObject):
     image_list_changed = Signal()
     current_index_changed = Signal(int)
     image_loaded = Signal(str, QPixmap)
+    load_started = Signal(str)        # path — 开始加载时触发
     load_error = Signal(str, str)
 
     def __init__(self, settings: AppSettings, parent=None):
         super().__init__(parent)
         self._settings = settings
         self._file_list: list[str] = []
-        self._all_files: list[str] = []  # 完整未过滤列表
+        self._all_files: list[str] = []
         self._current_index: int = -1
         self._current_dir: str = ""
         self._pixmap_cache: dict[int, QPixmap] = {}
+        self._pool = QThreadPool()
+        self._pool.setMaxThreadCount(2)
+        self._max_dim = 4096
+        self._pending_index: int = -1
 
     def load_directory(self, path: str) -> int:
         if not os.path.isdir(path):
@@ -31,6 +64,7 @@ class ImageManager(QObject):
         self._file_list.clear()
         self._all_files.clear()
         self._pixmap_cache.clear()
+        self._pool.waitForDone()
         formats = self._settings.supported_formats
         for entry in sorted(os.listdir(path)):
             full = os.path.join(path, entry)
@@ -46,7 +80,6 @@ class ImageManager(QObject):
         return len(self._file_list)
 
     def apply_filter(self, excluded_paths: set):
-        """过滤掉已分类图片。"""
         self._all_files = self._file_list.copy() if not self._all_files else self._all_files
         self._file_list = [f for f in self._all_files if f not in excluded_paths]
         self._current_index = 0 if self._file_list else -1
@@ -56,7 +89,6 @@ class ImageManager(QObject):
             self._load_and_emit(0)
 
     def clear_filter(self):
-        """显示全部图片。"""
         if self._all_files:
             self._file_list = self._all_files.copy()
             self._all_files = []
@@ -123,14 +155,14 @@ class ImageManager(QObject):
     def load_pixmap(self, path: str) -> QPixmap:
         if not os.path.exists(path):
             return QPixmap()
-        max_dim = 4096
         pixmap = QPixmap(path)
         if pixmap.isNull():
             return QPixmap()
-        if pixmap.width() > max_dim or pixmap.height() > max_dim:
+        if pixmap.width() > self._max_dim or pixmap.height() > self._max_dim:
             pixmap = pixmap.scaled(
-                max_dim, max_dim, aspectRatioMode=1, transformMode=1
-            )  # Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                self._max_dim, self._max_dim,
+                Qt.KeepAspectRatio, Qt.SmoothTransformation,
+            )
         return pixmap
 
     def thumb_at(self, index: int) -> Optional[QPixmap]:
@@ -140,18 +172,33 @@ class ImageManager(QObject):
         self._pixmap_cache[index] = pixmap
 
     def _load_and_emit(self, index: int):
-        if 0 <= index < len(self._file_list):
-            path = self._file_list[index]
-            cached = self._pixmap_cache.get(index)
-            if cached and not cached.isNull():
-                self.image_loaded.emit(path, cached)
-                return
-            pixmap = self.load_pixmap(path)
-            if pixmap.isNull():
-                self.load_error.emit(path, "Failed to load image")
-                return
+        if not (0 <= index < len(self._file_list)):
+            return
+        path = self._file_list[index]
+
+        # 缓存命中 → 直接显示
+        cached = self._pixmap_cache.get(index)
+        if cached and not cached.isNull():
+            self.image_loaded.emit(path, cached)
+            return
+
+        # 缓存未命中 → 通知 UI 开始加载，异步后台加载
+        self._pending_index = index
+        self.load_started.emit(path)
+        task = _LoadTask(path, index, self._max_dim)
+        task.signaller.ready.connect(self._on_load_ready)
+        task.signaller.error.connect(self._on_load_error)
+        self._pool.start(task)
+
+    def _on_load_ready(self, index: int, pixmap: QPixmap):
+        if index == self._pending_index:
+            path = self._file_list[index] if index < len(self._file_list) else ""
             self._pixmap_cache[index] = pixmap
             self.image_loaded.emit(path, pixmap)
+
+    def _on_load_error(self, index: int, msg: str):
+        if index < len(self._file_list):
+            self.load_error.emit(self._file_list[index], msg)
 
     @property
     def current_dir(self) -> str:

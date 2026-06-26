@@ -1,4 +1,4 @@
-from PySide6.QtCore import QObject, Signal, QThreadPool, QRunnable
+from PySide6.QtCore import QObject, Signal, QThreadPool, QRunnable, Qt
 from PySide6.QtGui import QPixmap
 
 from core.settings import AppSettings
@@ -26,8 +26,7 @@ class PreloadTask(QRunnable):
             if pixmap.width() > self._max_dim or pixmap.height() > self._max_dim:
                 pixmap = pixmap.scaled(
                     self._max_dim, self._max_dim,
-                    aspectRatioMode=1,
-                    transformMode=1,
+                    Qt.KeepAspectRatio, Qt.SmoothTransformation,
                 )
             self.signaller.ready.emit(self._index, pixmap)
         except Exception as e:

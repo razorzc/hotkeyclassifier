@@ -2,7 +2,7 @@ from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
 from PySide6.QtCore import Signal, Qt, QRectF, QPointF, QPoint
 from PySide6.QtGui import (
     QPixmap, QWheelEvent, QMouseEvent, QKeyEvent, QPainter,
-    QPen, QColor, QCursor,
+    QPen, QColor, QCursor, QFont,
 )
 
 from core.settings import AppSettings
@@ -57,6 +57,19 @@ class ImageViewer(QGraphicsView):
         bindings = self._settings.key_bindings
         for action, key_str in bindings.items():
             self._bindings_reverse[key_str] = action
+
+    def show_loading(self, filename: str = ""):
+        """异步加载中 — 清空画面，显示加载提示。"""
+        self._scene.clear()
+        from PySide6.QtWidgets import QGraphicsTextItem
+        text = QGraphicsTextItem(f"加载中...\n{filename}")
+        text.setDefaultTextColor(QColor("#a6adc8"))
+        font = QFont("Microsoft YaHei", 20)
+        text.setFont(font)
+        text.setPos(-text.boundingRect().width() / 2, -text.boundingRect().height() / 2)
+        self._scene.addItem(text)
+        self._scene.setSceneRect(self.viewport().rect())
+        self.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
 
     def set_image(self, pixmap: QPixmap):
         self._scene.clear()

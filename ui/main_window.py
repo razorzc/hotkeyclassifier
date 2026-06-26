@@ -272,6 +272,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self):
         self._image_manager.image_list_changed.connect(self._on_list_changed)
         self._image_manager.current_index_changed.connect(self._on_index_changed)
+        self._image_manager.load_started.connect(self._on_load_started)
         self._image_manager.image_loaded.connect(self._on_image_loaded)
         self._image_manager.load_error.connect(self._on_load_error)
         self._viewer.navigate_requested.connect(self._on_navigate)
@@ -370,6 +371,10 @@ class MainWindow(QMainWindow):
         else:
             self._status_label.setText("按 1/2/3 可选裁剪，直接按分类键标记标签")
             self._status_label.setStyleSheet("")
+
+    def _on_load_started(self, path: str):
+        """图片开始异步加载 — 清空当前显示，提示加载中。"""
+        self._viewer.show_loading(os.path.basename(path))
 
     def _on_load_error(self, path: str, error: str):
         self._status_label.setText(f"加载失败: {error}")

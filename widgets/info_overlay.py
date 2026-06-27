@@ -47,7 +47,8 @@ class InfoOverlay(QWidget):
     def update_info(self, filename: str, resolution: str, zoom_percent: float,
                     index: int, total: int, directory: str,
                     classified_label: str = "", classified_by: str = "",
-                    classified_at: str = "", multi_count: int = 0):
+                    classified_at: str = "", multi_count: int = 0,
+                    batch_id: str = "", export_status: str = ""):
         self._filename_label.setText(filename)
         self._resolution_label.setText(f"原始分辨率: {resolution}")
         self._zoom_label.setText(f"缩放: {zoom_percent:.0f}%")
@@ -59,6 +60,12 @@ class InfoOverlay(QWidget):
                 parts.append(classified_by)
             if classified_at:
                 parts.append(classified_at)
+            if batch_id:
+                parts.append(f"批次:{batch_id}")
+            if export_status == "synced":
+                parts.append("✓已导出")
+            elif export_status == "pending":
+                parts.append("○待导出")
             text = " | ".join(parts)
             if multi_count > 1:
                 text = f"[{multi_count}人标注] {text}"

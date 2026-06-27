@@ -286,29 +286,74 @@ class MainWindow(QMainWindow):
     # ── Slots: Navigation ─────────────────────────────────
     def _on_open_directory(self):
         path = QFileDialog.getExistingDirectory(self, "选择图片文件夹")
-        if path:
-            self._save_progress()
-            # 合并所有用户进度 + entry_manager 元数据
-            self._classified_map = self._progress.get_merged_classified(path)
-            self._multi_count.clear()
-            all_entries = self._get_entries()
-            for e in all_entries:
-                bn = os.path.basename(e["image_path"])
-                self._multi_count[bn] = self._multi_count.get(bn, 0) + 1
-            data = self._progress.load_my(path)
-            self._image_manager.load_directory(path)
-            saved_idx = data.get("current_index", 0)
-            total = self._image_manager.total_count()
-            if 0 < saved_idx < total:
-                self._image_manager.go_to(saved_idx)
-            if self._filter_action and self._filter_action.isChecked():
-                self._apply_unclassified_filter()
-            classified_count = len(self._classified_map)
-            if classified_count:
-                self._status_label.setText(
-                    f"已加载: {classified_count} 张已分类 | 当前 {min(saved_idx+1, total)}/{total}"
-                )
-                self._status_label.setStyleSheet("color: #a6e3a1; font-weight: bold;")
+        if not path:
+            return
+
+        # ── 进度对话框 ────────────────────────────────
+        progress = QProgressDialog("正在加载数据集...", None, 0, 4, self)
+        progress.setWindowTitle("加载数据集")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        progress.setLabelText("正在保存当前进度...")
+        progress.show()
+        QApplication.processEvents()
+
+        self._save_progress()
+
+        # Step 1: 读取所有用户的标注进度
+        progress.setValue(1)
+        progress.setLabelText("正在读取标注进度...")
+        QApplication.processEvents()
+        self._classified_map = self._progress.get_merged_classified(path)
+
+        # Step 2: 统计多人标注
+        self._multi_count.clear()
+        all_entries = self._get_entries()
+        for e in all_entries:
+            bn = os.path.basename(e["image_path"])
+            self._multi_count[bn] = self._multi_count.get(bn, 0) + 1
+
+        # Step 3: 读取自身进度 + 恢复批次上下文
+        progress.setValue(2)
+        progress.setLabelText("正在恢复浏览位置与批次...")
+        QApplication.processEvents()
+        data = self._progress.load_my(path)
+        # 恢复该目录的批次上下文
+        saved_batch = data.get("current_batch", "")
+        if saved_batch:
+            self._batch_manager.set_current(saved_batch)
+            self._rebuild_batch_menu()
+
+        # Step 4: 加载图片列表
+        progress.setValue(3)
+        progress.setLabelText("正在扫描图片文件...")
+        QApplication.processEvents()
+        self._image_manager.load_directory(path)
+        saved_idx = data.get("current_index", 0)
+        total = self._image_manager.total_count()
+        if 0 < saved_idx < total:
+            self._image_manager.go_to(saved_idx)
+        if self._filter_action and self._filter_action.isChecked():
+            self._apply_unclassified_filter()
+
+        progress.setValue(4)
+        QApplication.processEvents()
+        progress.close()
+
+        classified_count = len(self._classified_map)
+        batch_name = saved_batch or self._batch_manager.current_id()
+        if classified_count:
+            self._status_label.setText(
+                f"已加载: {classified_count} 张已分类 | 批次: {batch_name} | "
+                f"当前 {min(saved_idx+1, total)}/{total}"
+            )
+            self._status_label.setStyleSheet("color: #a6e3a1; font-weight: bold;")
+        else:
+            self._status_label.setText(
+                f"就绪 | 批次: {batch_name} | 共 {total} 张"
+            )
+            self._status_label.setStyleSheet("")
 
     def _on_list_changed(self):
         total = self._image_manager.total_count()
@@ -336,6 +381,8 @@ class MainWindow(QMainWindow):
         classified_by = info.get("by", "")
         classified_at = info.get("at", "")[:10] if info.get("at") else ""
         multi = self._multi_count.get(filename, 0)
+        batch_id = info.get("batch_id", "")
+        export_status = info.get("status", "")
 
         self._info_overlay.update_info(
             filename=filename,
@@ -348,6 +395,8 @@ class MainWindow(QMainWindow):
             classified_by=classified_by,
             classified_at=classified_at,
             multi_count=multi,
+            batch_id=batch_id,
+            export_status=export_status,
         )
         self._info_overlay.show()
 
@@ -475,7 +524,10 @@ class MainWindow(QMainWindow):
         self._batch_manager.ensure_default(username)
         entry_id = self._entry_manager.write_entry(src, label, username, batch_id=batch_id)
         self._invalidate_entries()
-        self._classified_map[os.path.basename(src)] = {"label": label, "by": username, "at": ""}
+        self._classified_map[os.path.basename(src)] = {
+            "label": label, "by": username, "at": "",
+            "batch_id": batch_id, "status": "pending",
+        }
         self._multi_count[os.path.basename(src)] = self._multi_count.get(os.path.basename(src), 0) + 1
 
         # 记录 undo
@@ -516,6 +568,7 @@ class MainWindow(QMainWindow):
     def _on_export(self):
         """批量导出：选择批次后复制到目标目录。"""
         import shutil
+        import traceback
 
         target_dir = self._settings.target_dir
         if not target_dir:
@@ -524,8 +577,13 @@ class MainWindow(QMainWindow):
 
         # 批次选择对话框
         from widgets.batch_dialog import BatchExportDialog
-        dlg = BatchExportDialog(self._batch_manager, self._entry_manager, self)
-        if dlg.exec() != dlg.Accepted:
+        try:
+            dlg = BatchExportDialog(self._batch_manager, self._entry_manager, self)
+        except Exception as e:
+            get_logger().error(f"BatchExportDialog 创建失败: {e}\n{traceback.format_exc()}")
+            QMessageBox.critical(self, "导出失败", f"无法打开导出对话框:\n{e}")
+            return
+        if not dlg.exec():
             return
         selected = dlg.selected_batches()
         if not selected:
@@ -686,15 +744,32 @@ class MainWindow(QMainWindow):
             self._entries_dirty = False
         return self._entries_cache
 
+    def _get_batch_dir(self, batch_id: str) -> str:
+        """返回批次关联图片的目录（多个目录时取父目录或标注数量）。"""
+        entries = self._get_entries()
+        paths = [e["image_path"] for e in entries if e.get("batch_id") == batch_id]
+        if not paths:
+            return ""
+        dirs = list(dict.fromkeys(os.path.dirname(p) for p in paths))  # 去重保序
+        if len(dirs) == 1:
+            return dirs[0]
+        else:
+            # 多个目录 → 尝试取公共前缀
+            common = os.path.commonpath(dirs) if len(dirs) > 0 else ""
+            if common and common not in ("/", "\\", "", "."):
+                return f"{common}/… ({len(dirs)}个子目录)"
+            return f"{len(dirs)} 个目录"
+
     def _invalidate_entries(self):
         self._entries_dirty = True
 
     def _save_progress(self):
         idx = self._image_manager.current_index()
         flist = self._image_manager.get_image_list()
-        if not flist or not self._image_manager.current_dir:
+        cur_dir = self._image_manager.current_dir
+        if not flist or not cur_dir:
             return
-        dir_prefix = self._image_manager.current_dir.replace("\\", "/") + "/"
+        dir_prefix = cur_dir.replace("\\", "/") + "/"
         classified = {}
         for entry in self._get_entries():
             path = entry["image_path"].replace("\\", "/")
@@ -705,8 +780,12 @@ class MainWindow(QMainWindow):
                         "label": entry.get("label", ""),
                         "by": entry.get("classified_by", ""),
                         "at": entry.get("modified_at", ""),
+                        "batch_id": entry.get("batch_id", ""),
+                        "status": entry.get("status", "pending"),
                     }
-        self._progress.save_my(idx, flist, classified if classified else None)
+        current_batch = self._batch_manager.current_id()
+        self._progress.save_my(idx, flist, classified if classified else None,
+                               current_batch=current_batch)
 
     def _on_open_settings(self):
         from ui.settings_dialog import SettingsDialog
@@ -752,7 +831,11 @@ class MainWindow(QMainWindow):
             bid = b["id"]
             name = b["name"]
             marker = " ✓" if bid == current else ""
-            action = menu.addAction(f"{name}{marker}")
+            dir_info = self._get_batch_dir(bid)
+            label = f"{name}{marker}"
+            action = menu.addAction(label)
+            if dir_info:
+                action.setToolTip(f"目录: {dir_info}")
             action.triggered.connect(lambda checked, b=bid: self._on_switch_batch(b))
         menu.addSeparator()
         new_action = menu.addAction("+ 新建批次...")

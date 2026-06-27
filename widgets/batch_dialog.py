@@ -70,9 +70,13 @@ class BatchManageDialog(QDialog):
         current = self._batch_mgr.current_id()
         all_entries = self._entry_mgr.read_all_entries()
         counts = {}
+        dirs = {}  # batch_id -> 目录信息
         for e in all_entries:
             bid = e.get("batch_id", "")
             counts[bid] = counts.get(bid, 0) + 1
+            p = os.path.dirname(e.get("image_path", ""))
+            if p:
+                dirs.setdefault(bid, set()).add(p)
         for b in self._batch_mgr.list_batches():
             bid = b["id"]
             n = counts.get(bid, 0)
@@ -83,6 +87,13 @@ class BatchManageDialog(QDialog):
             item.setData(Qt.UserRole, bid)
             if bid == current:
                 item.setForeground(Qt.green)
+            # 目录提示
+            b_dirs = dirs.get(bid, set())
+            if b_dirs:
+                if len(b_dirs) == 1:
+                    item.setToolTip(f"目录: {b_dirs.pop()}")
+                else:
+                    item.setToolTip(f"目录: {len(b_dirs)} 个不同位置")
             self._lst.addItem(item)
 
     def _selected_id(self) -> str | None:
